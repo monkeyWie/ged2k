@@ -9,14 +9,14 @@ func TestMD4Hash(t *testing.T) {
 	data := []byte("")
 	expected := "31d6cfe0d16ae931b73c59d7e0c089c0"
 	
-	hash := Hash(data)
-	if len(hash) != MD4HashSize {
-		t.Errorf("Expected hash length %d, got %d", MD4HashSize, len(hash))
+	hashBytes := ComputeHash(data)
+	if len(hashBytes) != MD4HashSize {
+		t.Errorf("Expected hash length %d, got %d", MD4HashSize, len(hashBytes))
 	}
 	
 	// Convert to hex string
 	result := ""
-	for _, b := range hash {
+	for _, b := range hashBytes {
 		result += string("0123456789abcdef"[b>>4])
 		result += string("0123456789abcdef"[b&0xf])
 	}

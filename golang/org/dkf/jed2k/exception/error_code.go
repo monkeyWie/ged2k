@@ -29,13 +29,19 @@ const (
 	InternalError
 	BufferUnderflowException
 	BufferGetException
+	BufferOverflowException
 	WrongHashset
 	HashMismatch
 	NonWriteableChannel
 )
 
 const (
-	TagTypeUnknown = 30 + iota
+	BUFFER_UNDERFLOW_EXCEPTION = BufferUnderflowException
+	BUFFER_OVERFLOW_EXCEPTION = BufferOverflowException
+)
+
+const (
+	TagTypeUnknown = 31 + iota
 	TagToStringInvalid
 	TagToIntInvalid
 	TagToLongInvalid
@@ -127,6 +133,7 @@ var errorMessages = map[ErrorCode]string{
 	InternalError:                "Internal product error",
 	BufferUnderflowException:     "Buffer underflow exception",
 	BufferGetException:           "Buffer get method raised common exception",
+	BufferOverflowException:      "Buffer overflow exception",
 	WrongHashset:                 "Wrong hash set",
 	HashMismatch:                 "Hash mismatch",
 	NonWriteableChannel:          "Non writeable channel",
