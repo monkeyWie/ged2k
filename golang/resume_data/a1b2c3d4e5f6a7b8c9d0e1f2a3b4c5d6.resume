@@ -3,10 +3,10 @@
   "size": 52428800,
   "name": "example_archive.zip",
   "download_directory": "./downloads/archives",
-  "downloaded": 0,
+  "downloaded": 325276,
   "pieces": [],
   "downloaded_blocks": [],
   "peers": [],
-  "create_time": 1756976712,
-  "last_seen": 1756976712
+  "create_time": 1756978425,
+  "last_seen": 1756978425
 }

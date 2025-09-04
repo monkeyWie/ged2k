@@ -3,10 +3,10 @@
   "size": 1048576,
   "name": "example_file1.pdf",
   "download_directory": "./downloads/documents",
-  "downloaded": 678064,
+  "downloaded": 655689,
   "pieces": [],
   "downloaded_blocks": [],
   "peers": [],
-  "create_time": 1756976711,
-  "last_seen": 1756976711
+  "create_time": 1756978424,
+  "last_seen": 1756978424
 }
