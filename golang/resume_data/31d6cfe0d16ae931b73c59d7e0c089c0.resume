@@ -1,12 +1,12 @@
 {
   "hash": {},
-  "size": 1024,
-  "name": "test.txt",
+  "size": 1048576,
+  "name": "test.pdf",
   "download_directory": "./downloads",
   "downloaded": 0,
   "pieces": [],
   "downloaded_blocks": [],
   "peers": [],
-  "create_time": 1756981521,
-  "last_seen": 1756981521
+  "create_time": 1756982613,
+  "last_seen": 1756982613
 }

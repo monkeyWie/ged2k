@@ -1,12 +1,12 @@
 {
   "hash": {},
   "size": 104857600,
-  "name": "example_video.mp4",
-  "download_directory": "./downloads/videos",
-  "downloaded": 1161669,
+  "name": "video.mp4",
+  "download_directory": "./downloads",
+  "downloaded": 0,
   "pieces": [],
   "downloaded_blocks": [],
   "peers": [],
-  "create_time": 1756978424,
-  "last_seen": 1756978424
+  "create_time": 1756982666,
+  "last_seen": 1756982666
 }

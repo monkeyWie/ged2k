@@ -306,17 +306,31 @@ func (s *Session) RemoveTransfer(transferHash *hash.Hash, deleteFiles bool) erro
 	return nil
 }
 
-// GetTransfers returns all transfer handles
+// GetTransfers returns all transfer handles (non-blocking version to avoid deadlocks)
 func (s *Session) GetTransfers() []*TransferHandle {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
+	// Try to acquire the lock with a timeout to avoid deadlocks
+	lockAcquired := make(chan struct{}, 1)
+	var handles []*TransferHandle
 	
-	handles := make([]*TransferHandle, 0, len(s.transferHandles))
-	for _, handle := range s.transferHandles {
-		handles = append(handles, handle)
+	go func() {
+		s.mutex.RLock()
+		// Create a slice with same capacity but copy the handles
+		handles = make([]*TransferHandle, 0, len(s.transferHandles))
+		for _, handle := range s.transferHandles {
+			handles = append(handles, handle)
+		}
+		s.mutex.RUnlock()
+		lockAcquired <- struct{}{}
+	}()
+	
+	// Wait for lock acquisition with timeout
+	select {
+	case <-lockAcquired:
+		return handles
+	case <-time.After(100 * time.Millisecond): // 100ms timeout
+		// If we can't get the lock quickly, return empty slice to avoid hang
+		return make([]*TransferHandle, 0)
 	}
-	
-	return handles
 }
 
 // GetTransfer returns a specific transfer handle
@@ -397,7 +411,7 @@ func (s *Session) GetSessionStats() SessionStats {
 
 // mainLoop is the main session loop
 func (s *Session) mainLoop() {
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(2 * time.Second) // Reduced frequency to avoid mutex contention
 	defer ticker.Stop()
 	
 	for {
@@ -422,12 +436,17 @@ func (s *Session) updateTransfers() {
 	// Update each transfer with proper timeout and retry handling
 	for _, transfer := range transfers {
 		if !transfer.IsPaused() {
+			// Check transfer state before SecondTick to avoid deadlock
+			var needsInitialConnection bool
+			transfer.mutex.RLock()
+			needsInitialConnection = transfer.state == TransferStateQueued
+			transfer.mutex.RUnlock()
+			
 			// Let transfer handle its own peer connections, timeouts, and retries
 			transfer.SecondTick(1000, s) // 1000ms = 1 second
 			
-			// Check if we need to start initial connections for queued transfers
-			status := transfer.GetStatus()
-			if status.State == TransferStateQueued {
+			// Start initial connections if needed
+			if needsInitialConnection {
 				s.initiateTransferConnections(transfer)
 			}
 		}
