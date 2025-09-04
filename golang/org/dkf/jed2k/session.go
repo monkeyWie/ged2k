@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/monkeyWie/ged2k/golang/org/dkf/jed2k/hash"
+	"github.com/monkeyWie/ged2k/golang/org/dkf/jed2k/protocol"
 )
 
 // TransferHandle provides a handle to control and monitor a transfer
@@ -420,19 +421,76 @@ func (s *Session) updateTransfers() {
 	// Update each transfer (simulation)
 	for _, transfer := range transfers {
 		if !transfer.IsPaused() {
-			// TODO: Implement actual download logic
-			// For now, just simulate progress
 			status := transfer.GetStatus()
-			if status.State == TransferStateDownloading && status.Downloaded < status.Size {
-				// Simulate download progress
-				newDownloaded := status.Downloaded + int64(status.DownloadRate)
-				if newDownloaded > status.Size {
-					newDownloaded = status.Size
-				}
-				
-				transfer.updateStats(newDownloaded, status.Uploaded, status.DownloadRate, status.UploadRate)
+			
+			// Start queued transfers
+			if status.State == TransferStateQueued {
+				// Simulate connection to peers and start downloading
+				s.simulateTransferStart(transfer)
+			} else if status.State == TransferStateDownloading && status.Downloaded < status.Size {
+				// Continue download simulation
+				s.simulateDownloadProgress(transfer)
 			}
 		}
+	}
+}
+
+// simulateTransferStart simulates starting a queued transfer
+func (s *Session) simulateTransferStart(transfer *Transfer) {
+	// Simulate finding peers and starting download
+	simulatedRate := float64(50*1024 + (time.Now().UnixNano()%100)*1024) // 50-150 KB/s
+	
+	// Add some simulated peers
+	s.simulatePeers(transfer)
+	
+	// Start with current downloaded amount and the simulated rate
+	status := transfer.GetStatus()
+	transfer.updateStats(status.Downloaded, status.Uploaded, simulatedRate, 0)
+}
+
+// simulateDownloadProgress simulates ongoing download progress
+func (s *Session) simulateDownloadProgress(transfer *Transfer) {
+	status := transfer.GetStatus()
+	
+	// Simulate variable download rates (realistic behavior)
+	baseRate := status.DownloadRate
+	variation := 0.8 + (float64(time.Now().UnixNano()%400) / 1000.0) // 0.8 to 1.2 multiplier
+	newRate := baseRate * variation
+	
+	// Simulate downloaded bytes based on rate (1 second interval)
+	bytesDownloaded := int64(newRate)
+	newDownloaded := status.Downloaded + bytesDownloaded
+	if newDownloaded > status.Size {
+		newDownloaded = status.Size
+	}
+	
+	// Simulate some upload as well
+	newUploaded := status.Uploaded + int64(newRate*0.1) // 10% of download rate
+	
+	transfer.updateStats(newDownloaded, newUploaded, newRate, newRate*0.1)
+}
+
+// simulatePeers adds simulated peer connections to a transfer
+func (s *Session) simulatePeers(transfer *Transfer) {
+	// Add 2-5 simulated peers
+	peerCount := 2 + (time.Now().UnixNano() % 4)
+	
+	for i := int64(0); i < peerCount; i++ {
+		// Create IP address as uint32 (192.168.1.100 + i)
+		ip := uint32(0xC0A80164) + uint32(i) // 192.168.1.100 in network byte order
+		port := uint16(4661 + i)
+		
+		peer := &PeerInfo{
+			Endpoint:     protocol.NewEndpointFromIPPort(ip, port),
+			UserHash:     hash.NewHash(),
+			ClientName:   fmt.Sprintf("eMule %d.%d.%d", 0, 50, i),
+			Downloaded:   0,
+			Uploaded:     0,
+			DownloadRate: float64(10*1024 + (i*5*1024)), // 10-30 KB/s per peer
+			UploadRate:   0,
+			Connected:    true,
+		}
+		transfer.addPeer(peer)
 	}
 }
 
