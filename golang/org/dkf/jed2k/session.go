@@ -2,6 +2,7 @@ package jed2k
 
 import (
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -409,7 +410,7 @@ func (s *Session) mainLoop() {
 	}
 }
 
-// updateTransfers updates all transfer statistics
+// updateTransfers updates all transfer statistics and handles timeouts/retries
 func (s *Session) updateTransfers() {
 	s.mutex.RLock()
 	transfers := make([]*Transfer, 0, len(s.transfers))
@@ -418,79 +419,116 @@ func (s *Session) updateTransfers() {
 	}
 	s.mutex.RUnlock()
 	
-	// Update each transfer (simulation)
+	// Update each transfer with proper timeout and retry handling
 	for _, transfer := range transfers {
 		if !transfer.IsPaused() {
-			status := transfer.GetStatus()
+			// Let transfer handle its own peer connections, timeouts, and retries
+			transfer.SecondTick(1000, s) // 1000ms = 1 second
 			
-			// Start queued transfers
+			// Check if we need to start initial connections for queued transfers
+			status := transfer.GetStatus()
 			if status.State == TransferStateQueued {
-				// Simulate connection to peers and start downloading
-				s.simulateTransferStart(transfer)
-			} else if status.State == TransferStateDownloading && status.Downloaded < status.Size {
-				// Continue download simulation
-				s.simulateDownloadProgress(transfer)
+				s.initiateTransferConnections(transfer)
 			}
 		}
 	}
 }
 
-// simulateTransferStart simulates starting a queued transfer
-func (s *Session) simulateTransferStart(transfer *Transfer) {
-	// Simulate finding peers and starting download
-	simulatedRate := float64(50*1024 + (time.Now().UnixNano()%100)*1024) // 50-150 KB/s
+// initiateTransferConnections starts initial peer connections for a transfer
+func (s *Session) initiateTransferConnections(transfer *Transfer) {
+	// Add some initial peers to the transfer's policy
+	s.addInitialPeersToTransfer(transfer)
 	
-	// Add some simulated peers
-	s.simulatePeers(transfer)
-	
-	// Start with current downloaded amount and the simulated rate
-	status := transfer.GetStatus()
-	transfer.updateStats(status.Downloaded, status.Uploaded, simulatedRate, 0)
-}
-
-// simulateDownloadProgress simulates ongoing download progress
-func (s *Session) simulateDownloadProgress(transfer *Transfer) {
-	status := transfer.GetStatus()
-	
-	// Simulate variable download rates (realistic behavior)
-	baseRate := status.DownloadRate
-	variation := 0.8 + (float64(time.Now().UnixNano()%400) / 1000.0) // 0.8 to 1.2 multiplier
-	newRate := baseRate * variation
-	
-	// Simulate downloaded bytes based on rate (1 second interval)
-	bytesDownloaded := int64(newRate)
-	newDownloaded := status.Downloaded + bytesDownloaded
-	if newDownloaded > status.Size {
-		newDownloaded = status.Size
+	// Set transfer state to downloading when it starts connecting
+	transfer.mutex.Lock()
+	if transfer.state == TransferStateQueued {
+		transfer.state = TransferStateDownloading
 	}
-	
-	// Simulate some upload as well
-	newUploaded := status.Uploaded + int64(newRate*0.1) // 10% of download rate
-	
-	transfer.updateStats(newDownloaded, newUploaded, newRate, newRate*0.1)
+	transfer.mutex.Unlock()
 }
 
-// simulatePeers adds simulated peer connections to a transfer
-func (s *Session) simulatePeers(transfer *Transfer) {
-	// Add 2-5 simulated peers
-	peerCount := 2 + (time.Now().UnixNano() % 4)
+// addInitialPeersToTransfer adds initial peers for a transfer to get started
+func (s *Session) addInitialPeersToTransfer(transfer *Transfer) {
+	// Add some simulated peers to bootstrap the transfer
+	peerCount := 3 + (time.Now().UnixNano() % 3) // 3-5 peers
 	
 	for i := int64(0); i < peerCount; i++ {
 		// Create IP address as uint32 (192.168.1.100 + i)
-		ip := uint32(0xC0A80164) + uint32(i) // 192.168.1.100 in network byte order
+		ip := uint32(0xC0A80164) + uint32(i) // 192.168.1.100
 		port := uint16(4661 + i)
+		endpoint := protocol.NewEndpointFromIPPort(ip, port)
 		
-		peer := &PeerInfo{
-			Endpoint:     protocol.NewEndpointFromIPPort(ip, port),
-			UserHash:     hash.NewHash(),
-			ClientName:   fmt.Sprintf("eMule %d.%d.%d", 0, 50, i),
-			Downloaded:   0,
-			Uploaded:     0,
-			DownloadRate: float64(10*1024 + (i*5*1024)), // 10-30 KB/s per peer
-			UploadRate:   0,
-			Connected:    true,
+		// Create peer with some source flags
+		peer := NewPeerWithFlags(endpoint, true, SourceServer|SourceDHT)
+		
+		// Add peer to transfer's policy
+		if transfer.policy != nil {
+			added, err := transfer.policy.AddPeer(peer)
+			if err != nil {
+				// Log error but continue
+				fmt.Printf("Warning: failed to add peer %s: %v\n", endpoint.String(), err)
+			} else if added {
+				// Also add to legacy peers map for compatibility
+				peerInfo := &PeerInfo{
+					Endpoint:     endpoint,
+					UserHash:     hash.NewHash(),
+					ClientName:   fmt.Sprintf("eMule %d.%d.%d", 0, 50, i),
+					Downloaded:   0,
+					Uploaded:     0,
+					DownloadRate: 0,
+					UploadRate:   0,
+					Connected:    false,
+				}
+				transfer.addPeer(peerInfo)
+			}
 		}
-		transfer.addPeer(peer)
+	}
+}
+
+// simulateRealTransferProgress simulates realistic transfer progress with timeouts and reconnections
+func (s *Session) simulateRealTransferProgress(transfer *Transfer) {
+	transfer.mutex.Lock()
+	defer transfer.mutex.Unlock()
+	
+	// Check if transfer has active connections
+	activeConnections := 0
+	totalDownloadRate := 0.0
+	
+	for _, conn := range transfer.connections {
+		if conn.IsConnected() && !conn.IsDisconnecting() {
+			activeConnections++
+			// Simulate download rate per connection
+			rate := 10.0 * 1024 * (1.0 + rand.Float64()) // 10-20 KB/s per connection
+			totalDownloadRate += rate
+		}
+	}
+	
+	// Only progress if we have active connections
+	if activeConnections > 0 {
+		// Simulate downloaded bytes based on rate (1 second interval)
+		bytesDownloaded := int64(totalDownloadRate)
+		newDownloaded := transfer.downloaded + bytesDownloaded
+		if newDownloaded > transfer.size {
+			newDownloaded = transfer.size
+			transfer.finished = true
+			transfer.state = TransferStateCompleted
+		}
+		
+		// Simulate some upload as well
+		newUploaded := transfer.uploaded + int64(totalDownloadRate*0.1) // 10% of download rate
+		
+		transfer.downloaded = newDownloaded
+		transfer.uploaded = newUploaded
+		transfer.downloadRate = totalDownloadRate
+		transfer.uploadRate = totalDownloadRate * 0.1
+		
+		if !transfer.finished && transfer.state != TransferStateError {
+			transfer.state = TransferStateDownloading
+		}
+	} else {
+		// No active connections, reduce rates
+		transfer.downloadRate = 0
+		transfer.uploadRate = 0
 	}
 }
 

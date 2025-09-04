@@ -1,0 +1,12 @@
+{
+  "hash": {},
+  "size": 1048576,
+  "name": "demo.avi",
+  "download_directory": "./downloads",
+  "downloaded": 0,
+  "pieces": [],
+  "downloaded_blocks": [],
+  "peers": [],
+  "create_time": 1756980733,
+  "last_seen": 1756980733
+}

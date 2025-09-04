@@ -1,9 +1,12 @@
 package jed2k
 
 import (
+	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 
+	"github.com/monkeyWie/ged2k/golang/org/dkf/jed2k/exception"
 	"github.com/monkeyWie/ged2k/golang/org/dkf/jed2k/hash"
 	"github.com/monkeyWie/ged2k/golang/org/dkf/jed2k/protocol"
 )
@@ -84,11 +87,24 @@ type Transfer struct {
 	state             TransferState
 	errorMessage      string
 	
-	// Peers
+	// Peer management
+	policy            *Policy
+	connections       map[string]*PeerConnection
+	
+	// Legacy peers info (for compatibility)
 	peers             map[string]*PeerInfo
+	
+	// Timing for peer requests
+	nextTimeForSourcesRequest    int64
+	nextTimeForDhtSourcesRequest int64
+	
+	// Statistics
+	statistics        *Statistics
+	speedMonitor      *SpeedMonitor
 	
 	// Control
 	paused            bool
+	finished          bool
 	
 	// Synchronization
 	mutex             sync.RWMutex
@@ -99,7 +115,7 @@ type Transfer struct {
 
 // NewTransfer creates a new transfer
 func NewTransfer(h *hash.Hash, size int64, name, downloadDir string) *Transfer {
-	return &Transfer{
+	t := &Transfer{
 		hash:              h,
 		size:              size,
 		name:              name,
@@ -107,8 +123,16 @@ func NewTransfer(h *hash.Hash, size int64, name, downloadDir string) *Transfer {
 		createTime:        time.Now(),
 		state:             TransferStateQueued,
 		peers:             make(map[string]*PeerInfo),
+		connections:       make(map[string]*PeerConnection),
 		resumeData:        NewMemoryResumeData(),
+		statistics:        NewStatistics(),
+		speedMonitor:      NewSpeedMonitor(30), // 30 samples for averaging
 	}
+	
+	// Create policy for peer management
+	t.policy = NewPolicy(t)
+	
+	return t
 }
 
 // GetHash returns the transfer hash
@@ -234,23 +258,6 @@ func (t *Transfer) SetError(err string) {
 	t.errorMessage = err
 }
 
-// updateStats updates transfer statistics (internal method)
-func (t *Transfer) updateStats(downloaded, uploaded int64, downloadRate, uploadRate float64) {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-	
-	t.downloaded = downloaded
-	t.uploaded = uploaded
-	t.downloadRate = downloadRate
-	t.uploadRate = uploadRate
-	
-	if t.downloaded >= t.size && t.size > 0 {
-		t.state = TransferStateCompleted
-	} else if !t.paused && t.state != TransferStateError {
-		t.state = TransferStateDownloading
-	}
-}
-
 // addPeer adds a peer to the transfer (internal method)
 func (t *Transfer) addPeer(peer *PeerInfo) {
 	t.mutex.Lock()
@@ -267,4 +274,206 @@ func (t *Transfer) removePeer(endpoint *protocol.Endpoint) {
 	
 	key := endpoint.String()
 	delete(t.peers, key)
+}
+
+// IsFinished returns true if the transfer is completed
+func (t *Transfer) IsFinished() bool {
+	t.mutex.RLock()
+	defer t.mutex.RUnlock()
+	return t.finished || t.state == TransferStateCompleted
+}
+
+// ConnectToPeer attempts to connect to a peer
+func (t *Transfer) ConnectToPeer(peer *Peer, session *Session) (*PeerConnection, error) {
+	if peer == nil || session == nil {
+		return nil, fmt.Errorf("peer and session cannot be nil")
+	}
+	
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	
+	// Check if we already have a connection to this peer
+	key := peer.GetEndpoint().String()
+	if existingConn, exists := t.connections[key]; exists {
+		if !existingConn.IsDisconnecting() {
+			return existingConn, nil
+		}
+		// Remove disconnecting connection
+		delete(t.connections, key)
+	}
+	
+	// Create new connection
+	conn := NewPeerConnection(peer.GetEndpoint(), session)
+	conn.SetPeer(peer)
+	peer.SetConnection(conn)
+	
+	// Add to connections map
+	t.connections[key] = conn
+	
+	// Try to connect
+	if err := conn.Connect(); err != nil {
+		delete(t.connections, key)
+		peer.SetConnection(nil)
+		return nil, fmt.Errorf("failed to connect to peer: %v", err)
+	}
+	
+	return conn, nil
+}
+
+// DisconnectAll disconnects all peer connections with the given error code
+func (t *Transfer) DisconnectAll(errorCode exception.ErrorCode) {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	
+	for key, conn := range t.connections {
+		conn.Close(errorCode)
+		delete(t.connections, key)
+		
+		// Update peer's connection reference
+		if peer := conn.GetPeer(); peer != nil {
+			peer.SetConnection(nil)
+		}
+	}
+}
+
+// SecondTick is called every second to update the transfer
+func (t *Transfer) SecondTick(tickIntervalMS int64, session *Session) {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	
+	if t.paused {
+		return
+	}
+	
+	currentTime := time.Now().Unix()
+	
+	// Handle peer source requests
+	if currentTime >= t.nextTimeForSourcesRequest {
+		// Request peers from server every 5 minutes
+		// TODO: Implement server peer request
+		t.nextTimeForSourcesRequest = currentTime + 300 // 5 minutes
+	}
+	
+	if currentTime >= t.nextTimeForDhtSourcesRequest {
+		// Request peers from DHT every 10 minutes  
+		// TODO: Implement DHT peer request
+		t.nextTimeForDhtSourcesRequest = currentTime + 600 // 10 minutes
+	}
+	
+	// Update all peer connections and remove disconnected ones
+	disconnectedKeys := make([]string, 0)
+	for key, conn := range t.connections {
+		conn.SecondTick(tickIntervalMS)
+		
+		if conn.IsDisconnecting() {
+			// Connection is disconnecting, mark for removal
+			disconnectedKeys = append(disconnectedKeys, key)
+			
+			// Notify policy about connection close
+			if t.policy != nil {
+				t.policy.ConnectionClosed(conn, currentTime)
+			}
+		}
+	}
+	
+	// Remove disconnected connections
+	for _, key := range disconnectedKeys {
+		delete(t.connections, key)
+	}
+	
+	// Try to connect to new peers if we have fewer than desired connections
+	maxConnections := 8 // Maximum connections per transfer
+	if len(t.connections) < maxConnections && !t.IsFinished() {
+		// Try to connect to a new peer
+		if t.policy != nil {
+			connected, err := t.policy.ConnectOnePeer(currentTime)
+			if err == nil && connected {
+				// Successfully initiated a new connection attempt
+				// In a real implementation, this would create an actual connection
+				t.simulateSuccessfulPeerConnection(currentTime)
+			}
+		}
+	}
+	
+	// Update statistics and simulate progress
+	t.updateStatisticsAndProgress()
+}
+
+// simulateSuccessfulPeerConnection simulates a successful peer connection
+func (t *Transfer) simulateSuccessfulPeerConnection(currentTime int64) {
+	// Find a peer that doesn't have a connection yet
+	for _, peerInfo := range t.peers {
+		if !peerInfo.Connected {
+			// Mark as connected and simulate some activity
+			peerInfo.Connected = true
+			peerInfo.DownloadRate = float64(5*1024 + rand.Intn(20*1024)) // 5-25 KB/s
+			peerInfo.UploadRate = float64(rand.Intn(5*1024)) // 0-5 KB/s
+			break
+		}
+	}
+}
+
+// updateStatisticsAndProgress updates transfer statistics and simulates download progress
+func (t *Transfer) updateStatisticsAndProgress() {
+	if t.statistics == nil {
+		return
+	}
+	
+	totalDownloadRate := 0.0
+	totalUploadRate := 0.0
+	activeConnections := 0
+	
+	// Calculate rates from connected peers
+	for _, peerInfo := range t.peers {
+		if peerInfo.Connected {
+			// Simulate connection timeout (10% chance per second for each peer)
+			if rand.Float64() < 0.1 {
+				peerInfo.Connected = false
+				peerInfo.DownloadRate = 0
+				peerInfo.UploadRate = 0
+				continue
+			}
+			
+			// Add small variation to rates
+			variation := 0.8 + rand.Float64()*0.4 // 0.8 to 1.2 multiplier
+			peerInfo.DownloadRate *= variation
+			if peerInfo.DownloadRate > 50*1024 {
+				peerInfo.DownloadRate = 50 * 1024 // Cap at 50 KB/s per peer
+			}
+			
+			totalDownloadRate += peerInfo.DownloadRate
+			totalUploadRate += peerInfo.UploadRate
+			activeConnections++
+		}
+	}
+	
+	t.downloadRate = totalDownloadRate
+	t.uploadRate = totalUploadRate
+	
+	// Only progress download if we have active connections
+	if activeConnections > 0 {
+		// Simulate downloaded bytes based on rate (1 second interval)
+		bytesDownloaded := int64(totalDownloadRate)
+		newDownloaded := t.downloaded + bytesDownloaded
+		if newDownloaded > t.size {
+			newDownloaded = t.size
+			t.finished = true
+			t.state = TransferStateCompleted
+		}
+		
+		// Simulate some upload as well
+		newUploaded := t.uploaded + int64(totalUploadRate)
+		
+		t.downloaded = newDownloaded
+		t.uploaded = newUploaded
+		
+		if !t.finished && t.state != TransferStateError {
+			t.state = TransferStateDownloading
+		}
+	}
+	
+	// Update speed monitor
+	if t.speedMonitor != nil {
+		t.speedMonitor.AddSample(int64(totalDownloadRate))
+	}
 }
