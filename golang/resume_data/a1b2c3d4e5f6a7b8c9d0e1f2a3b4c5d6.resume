@@ -1,12 +1,12 @@
 {
   "hash": {},
-  "size": 52428800,
-  "name": "example_archive.zip",
-  "download_directory": "./downloads/archives",
-  "downloaded": 325276,
+  "size": 2048,
+  "name": "test2.txt",
+  "download_directory": "./downloads",
+  "downloaded": 0,
   "pieces": [],
   "downloaded_blocks": [],
   "peers": [],
-  "create_time": 1756978425,
-  "last_seen": 1756978425
+  "create_time": 1756981534,
+  "last_seen": 1756981534
 }

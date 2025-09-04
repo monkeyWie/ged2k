@@ -348,7 +348,12 @@ func (ec *ExampleClient) RunInteractiveMode() {
 			if len(parts) > 2 {
 				downloadDir = parts[2]
 			}
-			if err := ec.AddDownload(parts[1], downloadDir); err != nil {
+			// Remove quotes from ed2k link if present
+			link := parts[1]
+			if strings.HasPrefix(link, "\"") && strings.HasSuffix(link, "\"") {
+				link = strings.Trim(link, "\"")
+			}
+			if err := ec.AddDownload(link, downloadDir); err != nil {
 				fmt.Printf("Error: %v\n", err)
 			}
 			

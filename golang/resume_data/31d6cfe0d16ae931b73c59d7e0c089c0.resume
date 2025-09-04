@@ -1,12 +1,12 @@
 {
   "hash": {},
-  "size": 1048576,
-  "name": "example_file1.pdf",
-  "download_directory": "./downloads/documents",
-  "downloaded": 655689,
+  "size": 1024,
+  "name": "test.txt",
+  "download_directory": "./downloads",
+  "downloaded": 0,
   "pieces": [],
   "downloaded_blocks": [],
   "peers": [],
-  "create_time": 1756978424,
-  "last_seen": 1756978424
+  "create_time": 1756981521,
+  "last_seen": 1756981521
 }
