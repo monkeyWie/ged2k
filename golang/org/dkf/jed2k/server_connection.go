@@ -269,10 +269,9 @@ func (sc *ServerConnection) handleFoundFileSources(payload []byte) {
 	}
 	peerCount := payload[16]
 	
-	if sc.debugLogging {
-		fmt.Printf("[SERVER] ← Found %d peer sources for hash %s from %s\n", 
-			peerCount, hash.String(), sc.identifier)
-	}
+	// Always log peer discovery (not just debug mode)
+	fmt.Printf("[PEER DISCOVERY] Server %s returned %d peer sources for hash %s\n", 
+		sc.identifier, peerCount, hash.String()[:8]+"...")
 	
 	// Parse peer endpoints
 	offset := 17
@@ -285,9 +284,9 @@ func (sc *ServerConnection) handleFoundFileSources(payload []byte) {
 		peers = append(peers, endpoint)
 		offset += 6
 		
-		if sc.debugLogging {
-			fmt.Printf("[SERVER]   Peer %d: %s\n", i+1, endpoint.String())
-		}
+		// Always log each peer discovered
+		fmt.Printf("[PEER DISCOVERY]   Peer %d: %s (from server %s)\n", 
+			i+1, endpoint.String(), sc.identifier)
 	}
 	
 	// Add peers to corresponding transfer
@@ -332,13 +331,18 @@ func (sc *ServerConnection) addPeersToTransfer(hash *protocol.Hash, peers []*pro
 				transfer.mutex.Lock()
 				transfer.peers[endpoint.String()] = peerInfo
 				transfer.mutex.Unlock()
+				
+				fmt.Printf("[PEER ADDED] %s added to transfer %s (source: server %s)\n", 
+					endpoint.String(), transfer.name, sc.identifier)
+			} else if err != nil {
+				fmt.Printf("[PEER REJECTED] %s rejected for transfer %s: %v\n", 
+					endpoint.String(), transfer.name, err)
 			}
 		}
 	}
 	
-	if sc.debugLogging {
-		fmt.Printf("[SERVER] Added %d new peers to transfer %s\n", addedCount, transfer.name)
-	}
+	fmt.Printf("[PEER SUMMARY] Added %d/%d new peers to transfer %s from server %s\n", 
+		addedCount, len(peers), transfer.name, sc.identifier)
 }
 
 // RequestSources requests peer sources for a file hash from server

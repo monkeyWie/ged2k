@@ -1,14 +1,14 @@
 {
   "hash": {},
-  "size": 1048576,
-  "name": "example_file1.pdf",
-  "download_directory": "./downloads/documents",
+  "size": 1000000,
+  "name": "test.mp3",
+  "download_directory": "./downloads",
   "downloaded": 0,
   "pieces": [
     false
   ],
   "downloaded_blocks": [],
   "peers": [],
-  "create_time": 1757056932,
-  "last_seen": 1757056932
+  "create_time": 1757059136,
+  "last_seen": 1757059136
 }

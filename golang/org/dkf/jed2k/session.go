@@ -602,78 +602,22 @@ func (s *Session) initiateTransferConnections(transfer *Transfer) {
 
 // addMorePeersToTransfer adds additional peers when transfer has low connection count
 func (s *Session) addMorePeersToTransfer(transfer *Transfer) {
-	// Add additional peers to maintain active connections
-	peerCount := 2 + (time.Now().UnixNano() % 2) // 2-3 peers
+	// Note: Removed fake peer generation - rely on real peer discovery instead
+	fmt.Printf("[PEER DISCOVERY] Transfer %s needs more peers - requesting from servers\n", transfer.name)
 	
-	for i := int64(0); i < peerCount; i++ {
-		// Create different IP addresses
-		ip := uint32(0xC0A80164) + uint32(10) + uint32(i) // 192.168.1.110+
-		port := uint16(4661 + i)
-		endpoint := protocol.NewEndpointFromIPPort(ip, port)
-		
-		// Create peer with different source flags
-		peer := NewPeerWithFlags(endpoint, true, SourceDHT|SourceIncoming)
-		
-		// Add peer to transfer's policy
-		if transfer.policy != nil {
-			added, err := transfer.policy.AddPeer(peer)
-			if err == nil && added {
-				// Also add to legacy peers map
-				peerInfo := &PeerInfo{
-					Endpoint:     endpoint,
-					UserHash:     protocol.NewHash(),
-					ClientName:   fmt.Sprintf("aDrive %d.%d.%d", 3, 2, i),
-					Downloaded:   0,
-					Uploaded:     0,
-					DownloadRate: 0,
-					UploadRate:   0,
-					Connected:    false,
-				}
-				
-				transfer.mutex.Lock()
-				transfer.peers[endpoint.String()] = peerInfo
-				transfer.mutex.Unlock()
-			}
-		}
-	}
+	// Request more peers from servers instead of generating fake ones
+	s.requestSourcesForSpecificTransfer(transfer)
 }
 
 // addInitialPeersToTransfer adds initial peers for a transfer to get started
 func (s *Session) addInitialPeersToTransfer(transfer *Transfer) {
-	// Add some simulated peers to bootstrap the transfer
-	peerCount := 3 + (time.Now().UnixNano() % 3) // 3-5 peers
+	// Note: Removed fake local IP generation - peers should come from real discovery
+	fmt.Printf("[PEER DISCOVERY] Waiting for real peer sources from servers/DHT for transfer %s\n", transfer.name)
 	
-	for i := int64(0); i < peerCount; i++ {
-		// Create IP address as uint32 (192.168.1.100 + i)
-		ip := uint32(0xC0A80164) + uint32(i) // 192.168.1.100
-		port := uint16(4661 + i)
-		endpoint := protocol.NewEndpointFromIPPort(ip, port)
-		
-		// Create peer with some source flags
-		peer := NewPeerWithFlags(endpoint, true, SourceServer|SourceDHT)
-		
-		// Add peer to transfer's policy
-		if transfer.policy != nil {
-			added, err := transfer.policy.AddPeer(peer)
-			if err != nil {
-				// Log error but continue
-				fmt.Printf("Warning: failed to add peer %s: %v\n", endpoint.String(), err)
-			} else if added {
-				// Also add to legacy peers map for compatibility
-				peerInfo := &PeerInfo{
-					Endpoint:     endpoint,
-					UserHash:     protocol.NewHash(),
-					ClientName:   fmt.Sprintf("eMule %d.%d.%d", 0, 50, i),
-					Downloaded:   0,
-					Uploaded:     0,
-					DownloadRate: 0,
-					UploadRate:   0,
-					Connected:    false,
-				}
-				transfer.addPeer(peerInfo)
-			}
-		}
-	}
+	// The transfer will get real peers from:
+	// 1. Server responses (handleFoundFileSources)
+	// 2. DHT queries (when implemented)
+	// 3. Peer exchange (when implemented)
 }
 
 // simulateRealTransferProgress simulates realistic transfer progress with timeouts and reconnections
@@ -1008,6 +952,39 @@ func (s *Session) requestSourcesForAllTransfers() {
 			
 			// Delay before next server to spread the load
 			time.Sleep(2 * time.Second)
+		}(serverConn)
+	}
+}
+
+// requestSourcesForSpecificTransfer requests peer sources for a specific transfer from all connected servers
+func (s *Session) requestSourcesForSpecificTransfer(transfer *Transfer) {
+	s.mutex.RLock()
+	serverConnections := make([]*ServerConnection, 0, len(s.serverConnections))
+	for _, serverConn := range s.serverConnections {
+		if serverConn.IsConnected() {
+			serverConnections = append(serverConnections, serverConn)
+		}
+	}
+	s.mutex.RUnlock()
+	
+	if len(serverConnections) == 0 {
+		fmt.Printf("[SERVER] No connected servers available for requesting sources for transfer %s\n", transfer.name)
+		return
+	}
+	
+	fmt.Printf("[PEER DISCOVERY] Requesting additional sources for transfer %s from %d servers\n", 
+		transfer.name, len(serverConnections))
+	
+	// Request sources from all connected servers
+	for _, serverConn := range serverConnections {
+		go func(server *ServerConnection) {
+			if err := server.RequestSources(transfer.GetHash()); err != nil {
+				fmt.Printf("[SERVER] Failed to request additional sources for %s from %s: %v\n", 
+					transfer.name, server.identifier, err)
+			} else {
+				fmt.Printf("[SERVER] Requested additional sources for transfer %s from %s\n", 
+					transfer.name, server.identifier)
+			}
 		}(serverConn)
 	}
 }

@@ -237,16 +237,33 @@ func (ec *ExampleClient) ShowTransferDetails(index int) error {
 	}
 	
 	if len(peers) > 0 {
-		fmt.Printf("\nConnected Peers:\n")
+		fmt.Printf("\nDiscovered Peers (%d total):\n", len(peers))
+		fmt.Printf("%-20s %-15s %-10s %-10s %-15s\n", "Endpoint", "Client", "Downloaded", "Uploaded", "Status")
+		fmt.Println(strings.Repeat("-", 75))
+		
 		for i, peer := range peers {
-			if i >= 10 { // Limit to first 10 peers
-				fmt.Printf("... and %d more peers\n", len(peers)-10)
+			if i >= 20 { // Limit to first 20 peers for readability
+				fmt.Printf("... and %d more peers (use 'peers <index>' to see all)\n", len(peers)-20)
 				break
 			}
-			fmt.Printf("  %s - %s (↓ %s, ↑ %s)\n", 
-				peer.Endpoint.String(), peer.ClientName,
-				formatRate(peer.DownloadRate), formatRate(peer.UploadRate))
+			
+			status := "disconnected"
+			if peer.Connected {
+				status = "connected"
+			}
+			
+			fmt.Printf("%-20s %-15s %-10s %-10s %-15s\n", 
+				peer.Endpoint.String(), 
+				truncateString(peer.ClientName, 15),
+				formatBytes(peer.Downloaded), 
+				formatBytes(peer.Uploaded),
+				status)
 		}
+	} else {
+		fmt.Printf("\nNo peers discovered yet. Peer discovery status:\n")
+		fmt.Printf("  - Server queries: in progress\n")
+		fmt.Printf("  - DHT queries: not yet implemented\n")
+		fmt.Printf("  - Peer exchange: not yet implemented\n")
 	}
 	
 	return nil
@@ -274,6 +291,66 @@ func (ec *ExampleClient) ShowSessionStats() {
 	fmt.Printf("  Connected Peers: %d\n", stats.ConnectedPeers)
 	fmt.Printf("  Known Servers: %d\n", stats.KnownServers)
 	fmt.Printf("  Known Nodes: %d\n", stats.KnownNodes)
+}
+
+// ShowAllPeers shows all discovered peers for a specific transfer
+func (ec *ExampleClient) ShowAllPeers(index int) error {
+	handles := ec.session.GetTransfers()
+	if index < 1 || index > len(handles) {
+		return fmt.Errorf("invalid transfer index: %d", index)
+	}
+	
+	handle := handles[index-1]
+	status := handle.GetStatus()
+	peers := handle.GetPeersInfo()
+	
+	fmt.Printf("\n=== All Discovered Peers for Transfer ===\n")
+	fmt.Printf("Transfer: %s\n", status.Name)
+	fmt.Printf("Hash: %s\n", status.Hash.String())
+	fmt.Printf("Total Peers: %d\n", len(peers))
+	
+	if len(peers) == 0 {
+		fmt.Printf("\nNo peers discovered yet. This could mean:\n")
+		fmt.Printf("  1. Server connections are still establishing\n")
+		fmt.Printf("  2. Servers have no sources for this file\n") 
+		fmt.Printf("  3. File is very rare or unavailable\n")
+		fmt.Printf("\nCheck server connection status and try requesting sources again.\n")
+		return nil
+	}
+	
+	fmt.Printf("\n%-25s %-20s %-12s %-12s %-10s %-15s\n", 
+		"Endpoint", "Client", "Downloaded", "Uploaded", "Rate", "Status")
+	fmt.Println(strings.Repeat("-", 100))
+	
+	for i, peer := range peers {
+		status := "disconnected"
+		if peer.Connected {
+			status = "connected"
+		}
+		
+		rate := ""
+		if peer.DownloadRate > 0 || peer.UploadRate > 0 {
+			rate = fmt.Sprintf("↓%s ↑%s", 
+				formatRate(peer.DownloadRate), 
+				formatRate(peer.UploadRate))
+		}
+		
+		fmt.Printf("%-25s %-20s %-12s %-12s %-10s %-15s\n",
+			peer.Endpoint.String(),
+			truncateString(peer.ClientName, 20),
+			formatBytes(peer.Downloaded),
+			formatBytes(peer.Uploaded),
+			truncateString(rate, 10),
+			status)
+			
+		// Group by every 10 for readability
+		if (i+1) % 10 == 0 && i+1 < len(peers) {
+			fmt.Printf("\n--- Showing peers %d-%d of %d (press Enter to continue) ---\n", i-8, i+1, len(peers))
+			fmt.Scanln() // Wait for user input
+		}
+	}
+	
+	return nil
 }
 
 // DemonstratePersistence shows different persistence implementations
@@ -320,6 +397,7 @@ func (ec *ExampleClient) RunInteractiveMode() {
 	fmt.Println("  add <ed2k_link> [download_dir]  - Add a download")
 	fmt.Println("  list                            - List all transfers")
 	fmt.Println("  details <index>                 - Show transfer details")
+	fmt.Println("  peers <index>                   - Show all discovered peers for transfer")
 	fmt.Println("  pause <index>                   - Pause a transfer")
 	fmt.Println("  resume <index>                  - Resume a transfer")
 	fmt.Println("  pauseall                        - Pause all transfers")
@@ -383,6 +461,20 @@ func (ec *ExampleClient) RunInteractiveMode() {
 				fmt.Printf("Error: %v\n", err)
 			}
 			
+		case "peers":
+			if len(parts) < 2 {
+				fmt.Println("Usage: peers <index>")
+				continue
+			}
+			index, err := strconv.Atoi(parts[1])
+			if err != nil {
+				fmt.Println("Invalid index")
+				continue
+			}
+			if err := ec.ShowAllPeers(index); err != nil {
+				fmt.Printf("Error: %v\n", err)
+			}
+			
 		case "pause":
 			if len(parts) < 2 {
 				fmt.Println("Usage: pause <index>")
@@ -436,6 +528,7 @@ func (ec *ExampleClient) RunInteractiveMode() {
 			fmt.Println("  add <ed2k_link> [download_dir]  - Add a download")
 			fmt.Println("  list                            - List all transfers")
 			fmt.Println("  details <index>                 - Show transfer details")
+			fmt.Println("  peers <index>                   - Show all discovered peers for transfer")
 			fmt.Println("  pause <index>                   - Pause a transfer")
 			fmt.Println("  resume <index>                  - Resume a transfer")
 			fmt.Println("  pauseall                        - Pause all transfers")
@@ -464,6 +557,28 @@ func formatRate(rate float64) string {
 	} else {
 		return fmt.Sprintf("%.1f MB/s", rate/(1024*1024))
 	}
+}
+
+// formatBytes formats bytes to human readable format
+func formatBytes(bytes int64) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B", bytes)
+	} else if bytes < 1024*1024 {
+		return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
+	} else {
+		return fmt.Sprintf("%.1f MB", float64(bytes)/(1024*1024))
+	}
+}
+
+// truncateString truncates a string to a maximum length
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
 }
 
 // DemoExamples demonstrates the client with example ed2k links
