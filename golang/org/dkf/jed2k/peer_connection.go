@@ -164,36 +164,198 @@ func (pc *PeerConnection) Connect() error {
 	return nil
 }
 
-// handleConnection handles the ed2k protocol communication
+// handleConnection handles the ed2k protocol communication with detailed logging
 func (pc *PeerConnection) handleConnection() {
 	defer pc.conn.Close()
 	
+	fmt.Printf("[PEER] → Starting ed2k handshake with %s\n", pc.endpoint.String())
+	
 	// Send Hello packet to initiate handshake
 	if err := pc.sendHello(); err != nil {
-		fmt.Printf("Failed to send Hello: %v\n", err)
+		fmt.Printf("[PEER] ✗ Failed to send Hello to %s: %v\n", pc.endpoint.String(), err)
 		pc.Close(exception.InternalError)
 		return
 	}
 	
+	fmt.Printf("[PEER] → Hello packet sent to %s\n", pc.endpoint.String())
+	
 	// Start reading packets
 	buffer := make([]byte, 8192)
+	packetBuffer := make([]byte, 0, 8192) // Buffer for accumulating packet data
+	
 	for pc.connected {
 		pc.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 		n, err := pc.conn.Read(buffer)
 		if err != nil {
+			fmt.Printf("[PEER] ✗ Read error from %s: %v\n", pc.endpoint.String(), err)
 			pc.Close(exception.IOError)
 			return
 		}
 		
 		if n > 0 {
 			pc.lastReceive = time.Now().Unix()
-			if err := pc.processReceivedData(buffer[:n]); err != nil {
-				fmt.Printf("Failed to process data: %v\n", err)
-				pc.Close(exception.InternalError)
-				return
+			packetBuffer = append(packetBuffer, buffer[:n]...)
+			
+			// Process complete packets
+			for {
+				processedBytes, err := pc.processReceivedDataWithLogging(packetBuffer)
+				if err != nil {
+					fmt.Printf("[PEER] ✗ Failed to process data from %s: %v\n", pc.endpoint.String(), err)
+					pc.Close(exception.InternalError)
+					return
+				}
+				
+				if processedBytes == 0 {
+					break // Need more data for a complete packet
+				}
+				
+				// Remove processed bytes
+				packetBuffer = packetBuffer[processedBytes:]
 			}
 		}
 	}
+}
+
+// processReceivedDataWithLogging processes received packet data with protocol parsing and logging
+func (pc *PeerConnection) processReceivedDataWithLogging(data []byte) (int, error) {
+	if len(data) < 6 { // Minimum packet size: protocol(1) + size(4) + opcode(1)
+		return 0, nil // Need more data
+	}
+	
+	// Parse ED2K packet header
+	protocolByte := data[0]
+	packetSize := binary.LittleEndian.Uint32(data[1:5])
+	opcode := data[5]
+	
+	if protocolByte != 0xE3 { // Standard ED2K protocol
+		return len(data), fmt.Errorf("unsupported protocol: 0x%02x", protocolByte)
+	}
+	
+	totalSize := int(packetSize) + 5 // +5 for protocol and size fields
+	if len(data) < totalSize {
+		return 0, nil // Need more data for complete packet
+	}
+	
+	payload := data[6:totalSize]
+	
+	fmt.Printf("[PEER] ← Received packet from %s: opcode=0x%02x size=%d\n", 
+		pc.endpoint.String(), opcode, packetSize)
+	
+	switch opcode {
+	case OP_HELLOANSWER: // 0x4C
+		err := pc.handleHelloAnswer(payload)
+		if err != nil {
+			return totalSize, fmt.Errorf("failed to handle HelloAnswer: %v", err)
+		}
+		
+	case OP_FILEANSWER: // 0x59
+		err := pc.handleFileAnswer(payload)
+		if err != nil {
+			return totalSize, fmt.Errorf("failed to handle FileAnswer: %v", err)
+		}
+		
+	case OP_SENDINGPART64: // 0x46
+		err := pc.handleSendingPart64(payload)
+		if err != nil {
+			return totalSize, fmt.Errorf("failed to handle SendingPart64: %v", err)
+		}
+		
+	default:
+		fmt.Printf("[PEER] ⚠ Unknown opcode 0x%02x from %s, ignoring\n", opcode, pc.endpoint.String())
+	}
+	
+	return totalSize, nil
+}
+
+// handleHelloAnswer processes HelloAnswer packet completing handshake
+func (pc *PeerConnection) handleHelloAnswer(payload []byte) error {
+	if len(payload) < 23 { // Minimum: hash(16) + ID(4) + port(2) + tagcount(1)
+		return fmt.Errorf("HelloAnswer payload too short: %d bytes", len(payload))
+	}
+	
+	// Extract peer info from HelloAnswer
+	peerHash := payload[0:16]
+	clientID := binary.LittleEndian.Uint32(payload[16:20])
+	port := binary.LittleEndian.Uint16(payload[20:22])
+	
+	fmt.Printf("[PEER] ← HelloAnswer from %s: ID=0x%08x port=%d hash=%x\n", 
+		pc.endpoint.String(), clientID, port, peerHash[:4])
+	
+	pc.mutex.Lock()
+	pc.handshakeCompleted = true
+	pc.mutex.Unlock()
+	
+	// Now send file request
+	return pc.sendFileRequestNew()
+}
+
+// sendFileRequestNew sends a file request for the transfer
+func (pc *PeerConnection) sendFileRequestNew() error {
+	if pc.transfer == nil {
+		return fmt.Errorf("no transfer associated")
+	}
+	
+	fmt.Printf("[PEER] → Sending FileRequest for %s to %s\n", 
+		pc.transfer.name, pc.endpoint.String())
+	
+	fileReq := client.NewFileRequest(pc.transfer.hash)
+	return pc.writePacket(OP_FILEREQUEST, fileReq)
+}
+
+// handleFileAnswer processes FileAnswer packet
+func (pc *PeerConnection) handleFileAnswer(payload []byte) error {
+	if len(payload) < 16 {
+		return fmt.Errorf("FileAnswer payload too short")
+	}
+	
+	// File hash
+	fileHash := payload[0:16]
+	
+	fmt.Printf("[PEER] ← FileAnswer from %s for file hash %x\n", 
+		pc.endpoint.String(), fileHash[:8])
+	
+	// Start requesting file parts
+	return pc.requestBlocks()
+}
+
+// handleSendingPart64 processes received file data
+func (pc *PeerConnection) handleSendingPart64(payload []byte) error {
+	if len(payload) < 28 { // Minimum: hash(16) + start(8) + end(8)
+		return fmt.Errorf("SendingPart64 payload too short")
+	}
+	
+	fileHash := payload[0:16]
+	startPos := binary.LittleEndian.Uint64(payload[16:24])
+	endPos := binary.LittleEndian.Uint64(payload[24:32])
+	actualData := payload[32:]
+	
+	dataSize := int64(len(actualData))
+	expectedSize := int64(endPos - startPos + 1)
+	
+	fmt.Printf("[PEER] ← SendingPart64 from %s: hash=%x start=%d end=%d data=%d bytes\n", 
+		pc.endpoint.String(), fileHash[:8], startPos, endPos, dataSize)
+	
+	if dataSize != expectedSize {
+		fmt.Printf("[PEER] ⚠ Data size mismatch: expected %d, got %d\n", expectedSize, dataSize)
+	}
+	
+	// Create block info for the received data
+	if pc.transfer != nil {
+		block := &PieceBlock{
+			PieceIndex: int(startPos / 256000), // Assume 256KB pieces
+			BlockIndex: int((startPos % 256000) / 176000), // Assume 176KB blocks  
+		}
+		
+		// Convert block to actual data for the transfer
+		blockData := actualData
+		if err := pc.handleReceivedBlock(block, blockData); err != nil {
+			return fmt.Errorf("failed to handle received block: %v", err)
+		}
+		
+		fmt.Printf("[PEER] ✓ Block processed successfully from %s\n", pc.endpoint.String())
+	}
+	
+	return nil
 }
 
 // sendHello sends the initial Hello packet
@@ -207,6 +369,9 @@ func (pc *PeerConnection) sendHello() error {
 	
 	// Create Hello packet
 	hello := client.NewHello(userHash, 0x01234567, 4662) // Example client ID and port
+	
+	fmt.Printf("[PEER] → Sending Hello to %s: hash=%x ID=0x01234567 port=4662\n", 
+		pc.endpoint.String(), userHash.Bytes()[:4])
 	
 	return pc.writePacket(OP_HELLO, hello)
 }
@@ -246,6 +411,10 @@ func (pc *PeerConnection) writePacket(opcode byte, packet protocol.Serializable)
 	_, err := pc.conn.Write(finalBuffer.Bytes())
 	if err == nil {
 		pc.lastSend = time.Now().Unix()
+		fmt.Printf("[PEER] → Packet sent to %s: opcode=0x%02x size=%d\n", 
+			pc.endpoint.String(), opcode, 1+dataSize)
+	} else {
+		fmt.Printf("[PEER] ✗ Failed to send packet to %s: %v\n", pc.endpoint.String(), err)
 	}
 	
 	return err

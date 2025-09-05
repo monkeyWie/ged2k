@@ -117,6 +117,10 @@ type Session struct {
 	nodesData           *NodesData
 	persistenceManager  *PersistenceManager
 	
+	// Server connections for peer discovery
+	serverConnections   map[string]*ServerConnection
+	activeServerConn    *ServerConnection
+	
 	// State
 	running             bool
 	connected           bool
@@ -145,6 +149,7 @@ func NewSession(settings *Settings, resumeData ResumeData) *Session {
 		serverList:         NewServerList(),
 		nodesData:          NewNodesData(),
 		persistenceManager: NewPersistenceManager(resumeData),
+		serverConnections:  make(map[string]*ServerConnection),
 		done:               make(chan struct{}),
 	}
 	
@@ -175,6 +180,9 @@ func (s *Session) Start() error {
 	// Start background routines
 	go s.mainLoop()
 	
+	// Connect to servers for peer discovery
+	go s.connectToServers()
+	
 	return nil
 }
 
@@ -189,6 +197,11 @@ func (s *Session) Stop() error {
 	
 	s.running = false
 	close(s.done)
+	
+	// Close all server connections
+	for _, serverConn := range s.serverConnections {
+		serverConn.Close()
+	}
 	
 	// Save all transfer resume data
 	for _, transfer := range s.transfers {
@@ -321,6 +334,20 @@ func (s *Session) AddTransfer(params *AddTransferParams) (*TransferHandle, error
 			// Small delay to allow the function to return first
 			time.Sleep(100 * time.Millisecond)
 			s.initiateTransferConnections(transfer)
+			
+			// Request sources from server if connected
+			s.mutex.RLock()
+			activeServer := s.activeServerConn
+			s.mutex.RUnlock()
+			
+			if activeServer != nil && activeServer.IsConnected() {
+				time.Sleep(2 * time.Second) // Allow some time for connection setup
+				if err := activeServer.RequestSources(transfer.GetHash()); err != nil {
+					fmt.Printf("[SERVER] Failed to request sources for new transfer %s: %v\n", transfer.name, err)
+				} else {
+					fmt.Printf("[SERVER] Requested sources for new transfer %s\n", transfer.name)
+				}
+			}
 		}()
 	}
 	
@@ -694,4 +721,150 @@ type SessionStats struct {
 	ConnectedPeers      int     `json:"connected_peers"`
 	KnownServers        int     `json:"known_servers"`
 	KnownNodes          int     `json:"known_nodes"`
+}
+
+// connectToServers connects to available ed2k servers for peer discovery
+func (s *Session) connectToServers() {
+	// Wait a bit for session to initialize
+	time.Sleep(2 * time.Second)
+	
+	// Get available servers
+	servers := s.getAvailableServers()
+	if len(servers) == 0 {
+		fmt.Printf("[SERVER] No servers available for connection\n")
+		return
+	}
+	
+	// Try to connect to servers in order
+	for _, server := range servers {
+		if !s.IsRunning() {
+			break
+		}
+		
+		addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", server.IP, server.Port))
+		if err != nil {
+			fmt.Printf("[SERVER] Failed to resolve server %s:%d - %v\n", server.IP, server.Port, err)
+			continue
+		}
+		
+		serverConn := NewServerConnection(server.Name, addr, s)
+		
+		s.mutex.Lock()
+		s.serverConnections[server.Name] = serverConn
+		s.mutex.Unlock()
+		
+		if err := serverConn.Connect(); err != nil {
+			fmt.Printf("[SERVER] Failed to connect to %s - %v\n", server.Name, err)
+			continue
+		}
+		
+		// Set as active server connection
+		s.mutex.Lock()
+		s.activeServerConn = serverConn
+		s.mutex.Unlock()
+		
+		fmt.Printf("[SERVER] Successfully connected to server %s\n", server.Name)
+		
+		// Wait for handshake and start requesting sources
+		time.Sleep(5 * time.Second)
+		s.requestSourcesForAllTransfers()
+		
+		// Keep connection alive and monitor
+		go s.maintainServerConnection(serverConn)
+		
+		break // Use first successful connection
+	}
+}
+
+// getAvailableServers returns a list of available servers
+func (s *Session) getAvailableServers() []ServerInfo {
+	servers := make([]ServerInfo, 0)
+	
+	// Add servers from server list
+	if s.serverList != nil && len(s.serverList.servers) > 0 {
+		for _, server := range s.serverList.servers {
+			serverIP := server.Endpoint.IP()
+			ip := fmt.Sprintf("%d.%d.%d.%d",
+				(serverIP>>24)&0xFF,
+				(serverIP>>16)&0xFF,
+				(serverIP>>8)&0xFF,
+				serverIP&0xFF)
+			
+			servers = append(servers, ServerInfo{
+				Name: server.Name,
+				IP:   ip,
+				Port: int(server.Endpoint.Port()),
+			})
+		}
+	}
+	
+	// Add default servers if none available
+	if len(servers) == 0 {
+		servers = append(servers, 
+			ServerInfo{Name: "eDonkeyServer No1", IP: "176.103.48.36", Port: 4242},
+			ServerInfo{Name: "eDonkeyServer No2", IP: "195.24.106.203", Port: 4661},
+		)
+	}
+	
+	return servers
+}
+
+// ServerInfo contains server connection information
+type ServerInfo struct {
+	Name string
+	IP   string
+	Port int
+}
+
+// maintainServerConnection keeps server connection alive and handles reconnection
+func (s *Session) maintainServerConnection(serverConn *ServerConnection) {
+	ticker := time.NewTicker(60 * time.Second) // Check every minute
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-ticker.C:
+			if !serverConn.IsConnected() {
+				fmt.Printf("[SERVER] Lost connection to %s, attempting reconnect...\n", serverConn.identifier)
+				if err := serverConn.Connect(); err != nil {
+					fmt.Printf("[SERVER] Reconnection failed: %v\n", err)
+				}
+			} else {
+				// Send periodic ping
+				serverConn.Ping()
+			}
+		}
+	}
+}
+
+// requestSourcesForAllTransfers requests peer sources for all active transfers
+func (s *Session) requestSourcesForAllTransfers() {
+	s.mutex.RLock()
+	activeServer := s.activeServerConn
+	transfers := make([]*Transfer, 0, len(s.transfers))
+	for _, transfer := range s.transfers {
+		if !transfer.IsFinished() {
+			transfers = append(transfers, transfer)
+		}
+	}
+	s.mutex.RUnlock()
+	
+	if activeServer == nil || !activeServer.IsConnected() {
+		return
+	}
+	
+	fmt.Printf("[SERVER] Requesting sources for %d active transfers\n", len(transfers))
+	
+	for _, transfer := range transfers {
+		if err := activeServer.RequestSources(transfer.GetHash()); err != nil {
+			fmt.Printf("[SERVER] Failed to request sources for %s: %v\n", transfer.name, err)
+		} else {
+			fmt.Printf("[SERVER] Requested sources for transfer %s\n", transfer.name)
+		}
+		
+		// Small delay between requests
+		time.Sleep(500 * time.Millisecond)
+	}
 }

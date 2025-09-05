@@ -266,25 +266,41 @@ func (p *Policy) comparePeersForConnection(peer1, peer2 *Peer) bool {
 	return peer1.GetLastConnected() < peer2.GetLastConnected()
 }
 
-// ConnectOnePeer attempts to connect to one peer
+// ConnectOnePeer attempts to connect to one peer using real ed2k protocol
 func (p *Policy) ConnectOnePeer(sessionTime int64) (bool, error) {
 	peer := p.FindConnectCandidate(sessionTime)
-	if peer != nil && p.transfer != nil {
-		// Get session from transfer (we'd need to modify Transfer to store session reference)
-		// For now, we'll simulate the connection attempt
-		peer.SetLastConnected(sessionTime)
-		
-		// Simulate connection success/failure
-		if rand.Float64() < 0.7 { // 70% success rate
-			// Connection successful - this would be handled by the actual connection logic
-			return true, nil
-		} else {
-			// Connection failed
-			peer.SetFailCount(peer.GetFailCount() + 1)
-			return false, nil
-		}
+	if peer == nil || p.transfer == nil {
+		return false, nil
 	}
-	return false, nil
+	
+	// Set last connected time
+	peer.SetLastConnected(sessionTime)
+	
+	// Create real peer connection using ed2k protocol
+	peerConn := NewPeerConnection(peer.GetEndpoint(), nil) // Simplified - session can be nil for now
+	peerConn.SetPeer(peer)
+	peerConn.SetTransfer(p.transfer)
+	
+	// Attempt real TCP connection with ed2k handshake
+	go func() {
+		err := peerConn.Connect()
+		if err != nil {
+			// Connection failed, increment failure count
+			peer.SetFailCount(peer.GetFailCount() + 1)
+			fmt.Printf("[PEER] Failed to connect to %s: %v\n", peer.GetEndpoint().String(), err)
+		} else {
+			// Connection successful
+			fmt.Printf("[PEER] Successfully connected to %s\n", peer.GetEndpoint().String())
+			peer.SetConnection(peerConn)
+			
+			// Add connection to transfer
+			p.transfer.mutex.Lock()
+			p.transfer.connections[peer.GetEndpoint().String()] = peerConn
+			p.transfer.mutex.Unlock()
+		}
+	}()
+	
+	return true, nil
 }
 
 // ConnectionClosed is called when a peer connection is closed
