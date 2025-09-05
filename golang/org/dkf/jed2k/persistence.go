@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/monkeyWie/ged2k/golang/org/dkf/jed2k/hash"
 	"github.com/monkeyWie/ged2k/golang/org/dkf/jed2k/protocol"
@@ -340,12 +341,12 @@ func (pm *PersistenceManager) SaveTransfer(transfer *Transfer) error {
 		Name:              status.Name,
 		DownloadDirectory: status.DownloadDirectory,
 		Downloaded:        status.Downloaded,
-		// TODO: Add pieces and blocks information
-		Pieces:           make([]bool, 0),
-		DownloadedBlocks: make([]BlockInfo, 0),
-		Peers:            make([]*protocol.Endpoint, 0),
+		// Add pieces and blocks information based on transfer progress
+		Pieces:           pm.createPiecesArray(transfer),
+		DownloadedBlocks: pm.createBlocksArray(transfer),
+		Peers:            pm.extractPeersFromTransfer(transfer),
 		CreateTime:       transfer.createTime.Unix(),
-		LastSeen:         transfer.createTime.Unix(),
+		LastSeen:         time.Now().Unix(),
 	}
 	
 	return pm.resumeData.Save(status.Hash, resumeData)
@@ -364,4 +365,64 @@ func (pm *PersistenceManager) RemoveTransfer(transferHash *hash.Hash) error {
 // HasTransfer checks if transfer resume data exists
 func (pm *PersistenceManager) HasTransfer(transferHash *hash.Hash) bool {
 	return pm.resumeData.Exists(transferHash)
+}
+
+// createPiecesArray creates a boolean array representing completed pieces
+func (pm *PersistenceManager) createPiecesArray(transfer *Transfer) []bool {
+	// Calculate number of pieces based on file size and piece size
+	const pieceSize = 9728000 // 9.5 MB default piece size
+	numPieces := int((transfer.size + pieceSize - 1) / pieceSize)
+	pieces := make([]bool, numPieces)
+	
+	// Mark pieces as completed based on downloaded progress
+	if transfer.GetStatus().Downloaded > 0 {
+		completedPieces := int(transfer.GetStatus().Downloaded / pieceSize)
+		for i := 0; i < completedPieces && i < numPieces; i++ {
+			pieces[i] = true
+		}
+	}
+	
+	return pieces
+}
+
+// createBlocksArray creates an array of downloaded block information
+func (pm *PersistenceManager) createBlocksArray(transfer *Transfer) []BlockInfo {
+	blocks := make([]BlockInfo, 0)
+	
+	// Create block entries based on downloaded progress
+	const blockSize = 9728 // Standard ED2K block size
+	downloadedBytes := transfer.GetStatus().Downloaded
+	numBlocks := int((downloadedBytes + blockSize - 1) / blockSize)
+	
+	for i := 0; i < numBlocks; i++ {
+		offset := int64(i * blockSize)
+		size := blockSize
+		if offset+int64(size) > downloadedBytes {
+			size = int(downloadedBytes - offset)
+		}
+		
+		blocks = append(blocks, BlockInfo{
+			PieceIndex: i / (9728000 / 9728), // Calculate piece index
+			Offset: offset,
+			Length: int64(size),
+		})
+	}
+	
+	return blocks
+}
+
+// extractPeersFromTransfer extracts peer endpoints from transfer connections
+func (pm *PersistenceManager) extractPeersFromTransfer(transfer *Transfer) []*protocol.Endpoint {
+	peers := make([]*protocol.Endpoint, 0)
+	
+	// Extract peers from active connections
+	transfer.mutex.RLock()
+	for _, conn := range transfer.connections {
+		if conn.endpoint != nil {
+			peers = append(peers, conn.endpoint)
+		}
+	}
+	transfer.mutex.RUnlock()
+	
+	return peers
 }

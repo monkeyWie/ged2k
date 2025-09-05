@@ -3,6 +3,11 @@ package jed2k
 import (
 	"fmt"
 	"math/rand"
+	"net"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -197,7 +202,38 @@ func (s *Session) IsRunning() bool {
 
 // AddServer adds a server to the server list
 func (s *Session) AddServer(endpoint string, name string) error {
-	// TODO: Parse endpoint string and add to server list
+	// Parse endpoint string format: "IP:port"
+	parts := strings.Split(endpoint, ":")
+	if len(parts) != 2 {
+		return fmt.Errorf("invalid endpoint format, expected IP:port")
+	}
+	
+	ip := net.ParseIP(parts[0])
+	if ip == nil {
+		return fmt.Errorf("invalid IP address: %s", parts[0])
+	}
+	
+	port, err := strconv.Atoi(parts[1])
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("invalid port: %s", parts[1])
+	}
+	
+	// Convert IP to uint32
+	ipv4 := ip.To4()
+	if ipv4 == nil {
+		return fmt.Errorf("IPv6 not supported")
+	}
+	
+	ipUint32 := uint32(ipv4[0])<<24 | uint32(ipv4[1])<<16 | uint32(ipv4[2])<<8 | uint32(ipv4[3])
+	
+	// Add to server list
+	serverEndpoint := ServerEndpoint{
+		Endpoint: protocol.NewEndpointFromIPPort(ipUint32, uint16(port)),
+		Name:     name,
+	}
+	
+	s.serverList.servers = append(s.serverList.servers, serverEndpoint)
+	
 	return nil
 }
 
@@ -232,7 +268,30 @@ func (s *Session) AddTransfer(params *AddTransferParams) (*TransferHandle, error
 	
 	// Apply resume data if provided
 	if params.ResumeData != nil {
-		// TODO: Apply resume data to transfer
+		// Apply completed bytes and piece information
+		if len(params.ResumeData.Pieces) > 0 {
+			const pieceSize = 9728000 // 9.5 MB default piece size
+			completedPieces := 0
+			for _, completed := range params.ResumeData.Pieces {
+				if completed {
+					completedPieces++
+				}
+			}
+			transfer.downloaded = int64(completedPieces * pieceSize)
+			if transfer.downloaded > transfer.size {
+				transfer.downloaded = transfer.size
+			}
+		}
+		
+		// Apply download progress from resume data
+		if params.ResumeData.Downloaded > 0 {
+			transfer.downloaded = params.ResumeData.Downloaded
+		}
+		
+		// Resume with previous state if not explicitly paused
+		if !params.Paused && params.ResumeData.Downloaded > 0 {
+			transfer.state = TransferStateDownloading
+		}
 	}
 	
 	// Set initial state
@@ -308,8 +367,20 @@ func (s *Session) RemoveTransfer(transferHash *hash.Hash, deleteFiles bool) erro
 	
 	// Delete files if requested
 	if deleteFiles {
-		// TODO: Delete download files
-		_ = transferToRemove // Use the variable to avoid unused error
+		// Delete the download file and any temporary files
+		if transferToRemove != nil {
+			downloadPath := filepath.Join(transferToRemove.downloadDirectory, transferToRemove.name)
+			if err := os.Remove(downloadPath); err != nil && !os.IsNotExist(err) {
+				// Log error but don't fail the removal
+				fmt.Printf("Warning: failed to delete file %s: %v\n", downloadPath, err)
+			}
+			
+			// Also try to delete partial/temp files
+			tempPath := downloadPath + ".part"
+			if err := os.Remove(tempPath); err != nil && !os.IsNotExist(err) {
+				fmt.Printf("Warning: failed to delete temp file %s: %v\n", tempPath, err)
+			}
+		}
 	}
 	
 	return nil

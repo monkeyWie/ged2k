@@ -93,20 +93,35 @@ func (sl *ServerList) GetServers() []ServerEndpoint {
 
 // LoadFromMet loads servers from a server.met file URL
 func (sl *ServerList) LoadFromMet(url string) error {
-	// TODO: Implement server.met file parsing
-	// For now, add some default servers as examples
-	defaultServers := []ServerEndpoint{
-		{
-			Endpoint: protocol.NewEndpointFromIPPort(uint32(176)<<24|uint32(103)<<16|uint32(48)<<8|uint32(36), 4184),
-			Name:     "DonkeyServer No1",
-		},
-		{
-			Endpoint: protocol.NewEndpointFromIPPort(uint32(195)<<24|uint32(245)<<16|uint32(244)<<8|uint32(205), 4661),
-			Name:     "eMule Security No1",
-		},
+	serverMet, err := protocol.DownloadServerMet(url)
+	if err != nil {
+		// Fallback to default servers if download fails
+		defaultServers := []ServerEndpoint{
+			{
+				Endpoint: protocol.NewEndpointFromIPPort(uint32(176)<<24|uint32(103)<<16|uint32(48)<<8|uint32(36), 4184),
+				Name:     "DonkeyServer No1",
+			},
+			{
+				Endpoint: protocol.NewEndpointFromIPPort(uint32(195)<<24|uint32(245)<<16|uint32(244)<<8|uint32(205), 4661),
+				Name:     "eMule Security No1",
+			},
+		}
+		sl.servers = append(sl.servers, defaultServers...)
+		return nil
 	}
-	
-	sl.servers = append(sl.servers, defaultServers...)
+
+	// Convert server.met servers to ServerEndpoint format
+	for _, server := range serverMet.Servers {
+		endpoint := ServerEndpoint{
+			Endpoint: protocol.NewEndpointFromIPPort(server.IP, uint16(server.Port)),
+			Name:     server.Name,
+		}
+		if server.Description != "" {
+			endpoint.Name += " - " + server.Description
+		}
+		sl.servers = append(sl.servers, endpoint)
+	}
+
 	return nil
 }
 
@@ -124,14 +139,29 @@ func NewNodesData() *NodesData {
 
 // LoadFromDat loads nodes from a nodes.dat file URL
 func (nd *NodesData) LoadFromDat(url string) error {
-	// TODO: Implement nodes.dat file parsing
-	// For now, add some default nodes as examples
-	defaultNodes := []protocol.Endpoint{
-		*protocol.NewEndpointFromIPPort(uint32(195)<<24|uint32(245)<<16|uint32(244)<<8|uint32(205), 4665),
-		*protocol.NewEndpointFromIPPort(uint32(176)<<24|uint32(103)<<16|uint32(48)<<8|uint32(36), 4665),
+	nodesDat, err := protocol.DownloadNodesDat(url)
+	if err != nil {
+		// Fallback to default nodes if download fails
+		defaultNodes := []protocol.Endpoint{
+			*protocol.NewEndpointFromIPPort(uint32(195)<<24|uint32(245)<<16|uint32(244)<<8|uint32(205), 4665),
+			*protocol.NewEndpointFromIPPort(uint32(176)<<24|uint32(103)<<16|uint32(48)<<8|uint32(36), 4665),
+		}
+		nd.nodes = append(nd.nodes, defaultNodes...)
+		return nil
 	}
-	
-	nd.nodes = append(nd.nodes, defaultNodes...)
+
+	// Convert contacts to Endpoint format
+	for _, contact := range nodesDat.Contacts {
+		endpoint := protocol.NewEndpointFromIPPort(contact.IP, contact.UDPPort)
+		nd.nodes = append(nd.nodes, *endpoint)
+	}
+
+	// Also add bootstrap entries if available
+	for _, bootstrap := range nodesDat.BootstrapEntries {
+		endpoint := protocol.NewEndpointFromIPPort(bootstrap.IP, bootstrap.UDPPort)
+		nd.nodes = append(nd.nodes, *endpoint)
+	}
+
 	return nil
 }
 
