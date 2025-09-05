@@ -119,6 +119,9 @@ func (ec *ExampleClient) AddDownload(linkStr, downloadDir string) error {
 	fmt.Printf("  Transfer Size: %d bytes\n", handle.GetSize())
 	fmt.Printf("  Transfer Name: %s\n", handle.GetName())
 	
+	// Small delay to allow state transition to occur
+	time.Sleep(200 * time.Millisecond)
+	
 	return nil
 }
 

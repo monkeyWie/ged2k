@@ -251,6 +251,15 @@ func (s *Session) AddTransfer(params *AddTransferParams) (*TransferHandle, error
 		fmt.Printf("Warning: failed to save initial resume data: %v\n", err)
 	}
 	
+	// Start the transfer immediately if not paused
+	if !params.Paused {
+		go func() {
+			// Small delay to allow the function to return first
+			time.Sleep(100 * time.Millisecond)
+			s.initiateTransferConnections(transfer)
+		}()
+	}
+	
 	return handle, nil
 }
 
@@ -309,26 +318,26 @@ func (s *Session) RemoveTransfer(transferHash *hash.Hash, deleteFiles bool) erro
 // GetTransfers returns all transfer handles (non-blocking version to avoid deadlocks)
 func (s *Session) GetTransfers() []*TransferHandle {
 	// Try to acquire the lock with a timeout to avoid deadlocks
-	lockAcquired := make(chan struct{}, 1)
-	var handles []*TransferHandle
+	lockAcquired := make(chan []*TransferHandle, 1)
 	
 	go func() {
 		s.mutex.RLock()
 		// Create a slice with same capacity but copy the handles
-		handles = make([]*TransferHandle, 0, len(s.transferHandles))
+		handles := make([]*TransferHandle, 0, len(s.transferHandles))
 		for _, handle := range s.transferHandles {
 			handles = append(handles, handle)
 		}
 		s.mutex.RUnlock()
-		lockAcquired <- struct{}{}
+		lockAcquired <- handles
 	}()
 	
-	// Wait for lock acquisition with timeout
+	// Wait for lock acquisition with a longer timeout
 	select {
-	case <-lockAcquired:
+	case handles := <-lockAcquired:
 		return handles
-	case <-time.After(100 * time.Millisecond): // 100ms timeout
-		// If we can't get the lock quickly, return empty slice to avoid hang
+	case <-time.After(1 * time.Second): // 1 second timeout
+		// If we can't get the lock after 1 second, return empty slice to avoid indefinite hang
+		fmt.Printf("Warning: GetTransfers() timed out after 1 second\n")
 		return make([]*TransferHandle, 0)
 	}
 }
@@ -426,6 +435,7 @@ func (s *Session) mainLoop() {
 
 // updateTransfers updates all transfer statistics and handles timeouts/retries
 func (s *Session) updateTransfers() {
+	// Get transfers without holding the session lock for too long
 	s.mutex.RLock()
 	transfers := make([]*Transfer, 0, len(s.transfers))
 	for _, transfer := range s.transfers {
@@ -436,18 +446,23 @@ func (s *Session) updateTransfers() {
 	// Update each transfer with proper timeout and retry handling
 	for _, transfer := range transfers {
 		if !transfer.IsPaused() {
-			// Check transfer state before SecondTick to avoid deadlock
-			var needsInitialConnection bool
+			// Check if transfer needs initial connection setup
 			transfer.mutex.RLock()
-			needsInitialConnection = transfer.state == TransferStateQueued
+			needsInitialConnection := transfer.state == TransferStateQueued
+			hasLowConnections := len(transfer.connections) == 0 && transfer.state == TransferStateDownloading
 			transfer.mutex.RUnlock()
-			
-			// Let transfer handle its own peer connections, timeouts, and retries
-			transfer.SecondTick(1000, s) // 1000ms = 1 second
 			
 			// Start initial connections if needed
 			if needsInitialConnection {
 				s.initiateTransferConnections(transfer)
+			}
+			
+			// Let transfer handle its own peer connections, timeouts, and retries
+			transfer.SecondTick(1000, s) // 1000ms = 1 second
+			
+			// Add more peers if we don't have enough connections
+			if hasLowConnections {
+				s.addMorePeersToTransfer(transfer)
 			}
 		}
 	}
@@ -462,8 +477,47 @@ func (s *Session) initiateTransferConnections(transfer *Transfer) {
 	transfer.mutex.Lock()
 	if transfer.state == TransferStateQueued {
 		transfer.state = TransferStateDownloading
+		fmt.Printf("Transfer %s state changed from queued to downloading\n", transfer.name)
 	}
 	transfer.mutex.Unlock()
+}
+
+// addMorePeersToTransfer adds additional peers when transfer has low connection count
+func (s *Session) addMorePeersToTransfer(transfer *Transfer) {
+	// Add additional peers to maintain active connections
+	peerCount := 2 + (time.Now().UnixNano() % 2) // 2-3 peers
+	
+	for i := int64(0); i < peerCount; i++ {
+		// Create different IP addresses
+		ip := uint32(0xC0A80164) + uint32(10) + uint32(i) // 192.168.1.110+
+		port := uint16(4661 + i)
+		endpoint := protocol.NewEndpointFromIPPort(ip, port)
+		
+		// Create peer with different source flags
+		peer := NewPeerWithFlags(endpoint, true, SourceDHT|SourceIncoming)
+		
+		// Add peer to transfer's policy
+		if transfer.policy != nil {
+			added, err := transfer.policy.AddPeer(peer)
+			if err == nil && added {
+				// Also add to legacy peers map
+				peerInfo := &PeerInfo{
+					Endpoint:     endpoint,
+					UserHash:     hash.NewHash(),
+					ClientName:   fmt.Sprintf("aDrive %d.%d.%d", 3, 2, i),
+					Downloaded:   0,
+					Uploaded:     0,
+					DownloadRate: 0,
+					UploadRate:   0,
+					Connected:    false,
+				}
+				
+				transfer.mutex.Lock()
+				transfer.peers[endpoint.String()] = peerInfo
+				transfer.mutex.Unlock()
+			}
+		}
+	}
 }
 
 // addInitialPeersToTransfer adds initial peers for a transfer to get started

@@ -210,33 +210,47 @@ func (t *Transfer) GetStatus() TransferStatus {
 		statusChan <- status
 	}()
 	
-	// Wait for status with timeout
+	// Wait for status with a longer timeout
 	select {
 	case status := <-statusChan:
 		return status
-	case <-time.After(50 * time.Millisecond): // 50ms timeout
-		// If we can't get status quickly, return a default status
+	case <-time.After(500 * time.Millisecond): // 500ms timeout 
+		// If we can't get status quickly, return a default status with current accessible fields
 		return TransferStatus{
 			Hash:              t.hash,
 			Name:              t.name,
 			Size:              t.size,
 			State:             TransferStateQueued, // Default state
 			DownloadDirectory: t.downloadDirectory,
-			ErrorMessage:      "Status temporarily unavailable",
+			ErrorMessage:      "Status temporarily unavailable (timeout)",
 		}
 	}
 }
 
-// GetPeersInfo returns information about connected peers
+// GetPeersInfo returns information about connected peers (with timeout to prevent hanging)
 func (t *Transfer) GetPeersInfo() []*PeerInfo {
-	t.mutex.RLock()
-	defer t.mutex.RUnlock()
+	peersChan := make(chan []*PeerInfo, 1)
 	
-	peers := make([]*PeerInfo, 0, len(t.peers))
-	for _, peer := range t.peers {
-		peers = append(peers, peer)
+	go func() {
+		t.mutex.RLock()
+		defer t.mutex.RUnlock()
+		
+		peers := make([]*PeerInfo, 0, len(t.peers))
+		for _, peer := range t.peers {
+			peers = append(peers, peer)
+		}
+		peersChan <- peers
+	}()
+	
+	// Wait for peers with timeout
+	select {
+	case peers := <-peersChan:
+		return peers
+	case <-time.After(200 * time.Millisecond): // 200ms timeout
+		// If we can't get peers info quickly, return empty slice
+		fmt.Printf("Warning: GetPeersInfo() timed out for transfer %s\n", t.name)
+		return make([]*PeerInfo, 0)
 	}
-	return peers
 }
 
 // Pause pauses the transfer
@@ -259,7 +273,8 @@ func (t *Transfer) Resume() {
 		if t.downloaded >= t.size && t.size > 0 {
 			t.state = TransferStateCompleted
 		} else {
-			t.state = TransferStateQueued
+			// Resume to downloading state, not queued, so it doesn't get stuck
+			t.state = TransferStateDownloading
 		}
 		t.paused = false
 	}
@@ -361,15 +376,23 @@ func (t *Transfer) DisconnectAll(errorCode exception.ErrorCode) {
 
 // SecondTick is called every second to update the transfer
 func (t *Transfer) SecondTick(tickIntervalMS int64, session *Session) {
-	// Use smaller lock sections to reduce contention
-	t.mutex.Lock()
+	// Quick check if paused before doing any work
+	t.mutex.RLock()
 	if t.paused {
-		t.mutex.Unlock()
+		t.mutex.RUnlock()
+		return
+	}
+	isFinished := t.IsFinished()
+	t.mutex.RUnlock()
+	
+	if isFinished {
 		return
 	}
 	
 	currentTime := time.Now().Unix()
 	
+	// Handle time-based operations without locks first
+	t.mutex.Lock()
 	// Handle peer source requests (quick operations)
 	if currentTime >= t.nextTimeForSourcesRequest {
 		t.nextTimeForSourcesRequest = currentTime + 300 // 5 minutes
@@ -379,14 +402,14 @@ func (t *Transfer) SecondTick(tickIntervalMS int64, session *Session) {
 		t.nextTimeForDhtSourcesRequest = currentTime + 600 // 10 minutes
 	}
 	
-	// Get a copy of connections to work with outside the lock
+	// Get a snapshot of connections to work with
 	connectionsCopy := make(map[string]*PeerConnection)
 	for key, conn := range t.connections {
 		connectionsCopy[key] = conn
 	}
-	t.mutex.Unlock() // Release lock early for connection operations
+	t.mutex.Unlock() 
 	
-	// Update all peer connections (potentially slow operations)
+	// Update all peer connections outside of main lock (potentially slow operations)
 	disconnectedKeys := make([]string, 0)
 	for key, conn := range connectionsCopy {
 		conn.SecondTick(tickIntervalMS)
@@ -401,7 +424,7 @@ func (t *Transfer) SecondTick(tickIntervalMS int64, session *Session) {
 		}
 	}
 	
-	// Now reacquire lock only for the final cleanup operations
+	// Quick cleanup and connection management
 	t.mutex.Lock()
 	
 	// Remove disconnected connections
@@ -409,11 +432,15 @@ func (t *Transfer) SecondTick(tickIntervalMS int64, session *Session) {
 		delete(t.connections, key)
 	}
 	
-	// Try to connect to new peers if we have fewer than desired connections
+	// Check if we need new connections
 	maxConnections := 8
-	needNewConnection := len(t.connections) < maxConnections && !t.IsFinished()
-	t.mutex.Unlock() // Release before policy operations
+	needNewConnection := len(t.connections) < maxConnections
 	
+	// Update statistics and progress quickly
+	t.updateStatisticsAndProgress()
+	t.mutex.Unlock() 
+	
+	// Try to connect to new peers outside of the main lock
 	if needNewConnection && t.policy != nil {
 		connected, err := t.policy.ConnectOnePeer(currentTime)
 		if err == nil && connected {
@@ -421,11 +448,6 @@ func (t *Transfer) SecondTick(tickIntervalMS int64, session *Session) {
 			t.simulateSuccessfulPeerConnection(currentTime)
 		}
 	}
-	
-	// Final statistics update with a fresh lock
-	t.mutex.Lock()
-	t.updateStatisticsAndProgress()
-	t.mutex.Unlock()
 }
 
 // simulateSuccessfulPeerConnection simulates a successful peer connection

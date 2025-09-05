@@ -3,10 +3,10 @@
   "size": 1048576,
   "name": "test.txt",
   "download_directory": "/tmp/downloads",
-  "downloaded": 0,
+  "downloaded": 41112,
   "pieces": [],
   "downloaded_blocks": [],
   "peers": [],
-  "create_time": 1757035394,
-  "last_seen": 1757035394
+  "create_time": 1757035352,
+  "last_seen": 1757035352
 }
