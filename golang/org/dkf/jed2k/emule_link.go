@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/monkeyWie/ged2k/golang/org/dkf/jed2k/hash"
+	"github.com/monkeyWie/ged2k/golang/org/dkf/jed2k/protocol"
 )
 
 // LinkType represents the type of eMule link
@@ -20,7 +20,7 @@ const (
 
 // EMuleLink represents a parsed ed2k:// link
 type EMuleLink struct {
-	Hash        *hash.Hash `json:"hash"`
+	Hash        *protocol.Hash `json:"hash"`
 	Size        int64      `json:"size"`
 	Name        string     `json:"name"`
 	LinkType    LinkType   `json:"link_type"`
@@ -87,7 +87,7 @@ func parseFileLink(segments []string, query string) (*EMuleLink, error) {
 		return nil, errors.New("invalid hash: must be 32 characters")
 	}
 	
-	hashBytes, err := hash.FromHexString(hashStr)
+	hashBytes, err := protocol.HashFromString(hashStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid hash format: %v", err)
 	}

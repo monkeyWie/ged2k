@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/monkeyWie/ged2k/golang/org/dkf/jed2k/hash"
 	"github.com/monkeyWie/ged2k/golang/org/dkf/jed2k/protocol"
 )
 
@@ -35,7 +34,7 @@ func (th *TransferHandle) IsValid() bool {
 }
 
 // GetHash returns the transfer hash
-func (th *TransferHandle) GetHash() *hash.Hash {
+func (th *TransferHandle) GetHash() *protocol.Hash {
 	if !th.IsValid() {
 		return nil
 	}
@@ -353,7 +352,7 @@ func (s *Session) AddTransferFromLink(linkStr, downloadDir string) (*TransferHan
 }
 
 // RemoveTransfer removes a transfer from the session
-func (s *Session) RemoveTransfer(transferHash *hash.Hash, deleteFiles bool) error {
+func (s *Session) RemoveTransfer(transferHash *protocol.Hash, deleteFiles bool) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	
@@ -420,7 +419,7 @@ func (s *Session) GetTransfers() []*TransferHandle {
 }
 
 // GetTransfer returns a specific transfer handle
-func (s *Session) GetTransfer(transferHash *hash.Hash) *TransferHandle {
+func (s *Session) GetTransfer(transferHash *protocol.Hash) *TransferHandle {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
 	
@@ -580,7 +579,7 @@ func (s *Session) addMorePeersToTransfer(transfer *Transfer) {
 				// Also add to legacy peers map
 				peerInfo := &PeerInfo{
 					Endpoint:     endpoint,
-					UserHash:     hash.NewHash(),
+					UserHash:     protocol.NewHash(),
 					ClientName:   fmt.Sprintf("aDrive %d.%d.%d", 3, 2, i),
 					Downloaded:   0,
 					Uploaded:     0,
@@ -621,7 +620,7 @@ func (s *Session) addInitialPeersToTransfer(transfer *Transfer) {
 				// Also add to legacy peers map for compatibility
 				peerInfo := &PeerInfo{
 					Endpoint:     endpoint,
-					UserHash:     hash.NewHash(),
+					UserHash:     protocol.NewHash(),
 					ClientName:   fmt.Sprintf("eMule %d.%d.%d", 0, 50, i),
 					Downloaded:   0,
 					Uploaded:     0,

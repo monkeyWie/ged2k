@@ -7,28 +7,27 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/monkeyWie/ged2k/golang/org/dkf/jed2k/hash"
 	"github.com/monkeyWie/ged2k/golang/org/dkf/jed2k/protocol"
 )
 
 // ResumeData interface for transfer resume data persistence
 type ResumeData interface {
 	// Save saves the transfer resume data
-	Save(transferHash *hash.Hash, data *TransferResumeData) error
+	Save(transferHash *protocol.Hash, data *TransferResumeData) error
 	
 	// Load loads the transfer resume data
-	Load(transferHash *hash.Hash) (*TransferResumeData, error)
+	Load(transferHash *protocol.Hash) (*TransferResumeData, error)
 	
 	// Remove removes the transfer resume data
-	Remove(transferHash *hash.Hash) error
+	Remove(transferHash *protocol.Hash) error
 	
 	// Exists checks if resume data exists for the transfer
-	Exists(transferHash *hash.Hash) bool
+	Exists(transferHash *protocol.Hash) bool
 }
 
 // TransferResumeData contains data needed to resume a transfer
 type TransferResumeData struct {
-	Hash              *hash.Hash              `json:"hash"`
+	Hash              *protocol.Hash              `json:"hash"`
 	Size              int64                   `json:"size"`
 	Name              string                  `json:"name"`
 	DownloadDirectory string                  `json:"download_directory"`
@@ -60,14 +59,14 @@ func NewMemoryResumeData() ResumeData {
 }
 
 // Save saves the transfer resume data in memory
-func (m *MemoryResumeData) Save(transferHash *hash.Hash, data *TransferResumeData) error {
+func (m *MemoryResumeData) Save(transferHash *protocol.Hash, data *TransferResumeData) error {
 	key := transferHash.String()
 	m.data[key] = data
 	return nil
 }
 
 // Load loads the transfer resume data from memory
-func (m *MemoryResumeData) Load(transferHash *hash.Hash) (*TransferResumeData, error) {
+func (m *MemoryResumeData) Load(transferHash *protocol.Hash) (*TransferResumeData, error) {
 	key := transferHash.String()
 	if data, exists := m.data[key]; exists {
 		return data, nil
@@ -76,14 +75,14 @@ func (m *MemoryResumeData) Load(transferHash *hash.Hash) (*TransferResumeData, e
 }
 
 // Remove removes the transfer resume data from memory
-func (m *MemoryResumeData) Remove(transferHash *hash.Hash) error {
+func (m *MemoryResumeData) Remove(transferHash *protocol.Hash) error {
 	key := transferHash.String()
 	delete(m.data, key)
 	return nil
 }
 
 // Exists checks if resume data exists in memory
-func (m *MemoryResumeData) Exists(transferHash *hash.Hash) bool {
+func (m *MemoryResumeData) Exists(transferHash *protocol.Hash) bool {
 	key := transferHash.String()
 	_, exists := m.data[key]
 	return exists
@@ -105,13 +104,13 @@ func NewDiskResumeData(basePath string) ResumeData {
 }
 
 // getFilePath returns the file path for a transfer's resume data
-func (d *DiskResumeData) getFilePath(transferHash *hash.Hash) string {
+func (d *DiskResumeData) getFilePath(transferHash *protocol.Hash) string {
 	filename := transferHash.String() + ".resume"
 	return filepath.Join(d.basePath, filename)
 }
 
 // Save saves the transfer resume data to disk
-func (d *DiskResumeData) Save(transferHash *hash.Hash, data *TransferResumeData) error {
+func (d *DiskResumeData) Save(transferHash *protocol.Hash, data *TransferResumeData) error {
 	filepath := d.getFilePath(transferHash)
 	
 	file, err := os.Create(filepath)
@@ -130,7 +129,7 @@ func (d *DiskResumeData) Save(transferHash *hash.Hash, data *TransferResumeData)
 }
 
 // Load loads the transfer resume data from disk
-func (d *DiskResumeData) Load(transferHash *hash.Hash) (*TransferResumeData, error) {
+func (d *DiskResumeData) Load(transferHash *protocol.Hash) (*TransferResumeData, error) {
 	filepath := d.getFilePath(transferHash)
 	
 	file, err := os.Open(filepath)
@@ -152,7 +151,7 @@ func (d *DiskResumeData) Load(transferHash *hash.Hash) (*TransferResumeData, err
 }
 
 // Remove removes the transfer resume data from disk
-func (d *DiskResumeData) Remove(transferHash *hash.Hash) error {
+func (d *DiskResumeData) Remove(transferHash *protocol.Hash) error {
 	filepath := d.getFilePath(transferHash)
 	
 	if err := os.Remove(filepath); err != nil && !os.IsNotExist(err) {
@@ -163,7 +162,7 @@ func (d *DiskResumeData) Remove(transferHash *hash.Hash) error {
 }
 
 // Exists checks if resume data exists on disk
-func (d *DiskResumeData) Exists(transferHash *hash.Hash) bool {
+func (d *DiskResumeData) Exists(transferHash *protocol.Hash) bool {
 	filepath := d.getFilePath(transferHash)
 	_, err := os.Stat(filepath)
 	return err == nil
@@ -171,7 +170,7 @@ func (d *DiskResumeData) Exists(transferHash *hash.Hash) bool {
 
 // AddTransferParams contains parameters for adding a new transfer
 type AddTransferParams struct {
-	Hash              *hash.Hash `json:"hash"`
+	Hash              *protocol.Hash `json:"hash"`
 	Size              int64      `json:"size"`
 	Name              string     `json:"name"`
 	DownloadDirectory string     `json:"download_directory"`
@@ -353,17 +352,17 @@ func (pm *PersistenceManager) SaveTransfer(transfer *Transfer) error {
 }
 
 // LoadTransfer loads transfer resume data
-func (pm *PersistenceManager) LoadTransfer(transferHash *hash.Hash) (*TransferResumeData, error) {
+func (pm *PersistenceManager) LoadTransfer(transferHash *protocol.Hash) (*TransferResumeData, error) {
 	return pm.resumeData.Load(transferHash)
 }
 
 // RemoveTransfer removes transfer resume data
-func (pm *PersistenceManager) RemoveTransfer(transferHash *hash.Hash) error {
+func (pm *PersistenceManager) RemoveTransfer(transferHash *protocol.Hash) error {
 	return pm.resumeData.Remove(transferHash)
 }
 
 // HasTransfer checks if transfer resume data exists
-func (pm *PersistenceManager) HasTransfer(transferHash *hash.Hash) bool {
+func (pm *PersistenceManager) HasTransfer(transferHash *protocol.Hash) bool {
 	return pm.resumeData.Exists(transferHash)
 }
 

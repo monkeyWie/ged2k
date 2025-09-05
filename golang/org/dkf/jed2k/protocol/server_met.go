@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -30,6 +31,92 @@ type Tag struct {
 	Type  byte        `json:"Type"`
 	Name  string      `json:"Name"`
 	Value interface{} `json:"Value"`
+}
+
+// NewStringTag creates a new string tag
+func NewStringTag(name string, value string) *Tag {
+	return &Tag{
+		Type:  TagTypeString,
+		Name:  name,
+		Value: value,
+	}
+}
+
+// NewUInt32Tag creates a new uint32 tag
+func NewUInt32Tag(name string, value uint32) *Tag {
+	return &Tag{
+		Type:  TagTypeUInt32,
+		Name:  name,
+		Value: value,
+	}
+}
+
+func (t *Tag) Get(src *bytes.Buffer) error {
+	return nil
+}
+
+func (t *Tag) Put(dst *bytes.Buffer) error {
+	// Write tag type
+	if err := binary.Write(dst, binary.LittleEndian, t.Type); err != nil {
+		return fmt.Errorf("failed to write tag type: %v", err)
+	}
+	
+	// Write name length and name
+	nameBytes := []byte(t.Name)
+	nameLen := uint16(len(nameBytes))
+	if err := binary.Write(dst, binary.LittleEndian, nameLen); err != nil {
+		return fmt.Errorf("failed to write name length: %v", err)
+	}
+	
+	if _, err := dst.Write(nameBytes); err != nil {
+		return fmt.Errorf("failed to write name: %v", err)
+	}
+	
+	// Write value based on type
+	switch t.Type {
+	case TagTypeString:
+		valueBytes := []byte(t.Value.(string))
+		valueLen := uint16(len(valueBytes))
+		if err := binary.Write(dst, binary.LittleEndian, valueLen); err != nil {
+			return fmt.Errorf("failed to write string value length: %v", err)
+		}
+		if _, err := dst.Write(valueBytes); err != nil {
+			return fmt.Errorf("failed to write string value: %v", err)
+		}
+	case TagTypeUInt32:
+		if err := binary.Write(dst, binary.LittleEndian, t.Value.(uint32)); err != nil {
+			return fmt.Errorf("failed to write uint32 value: %v", err)
+		}
+	case TagTypeUInt16:
+		if err := binary.Write(dst, binary.LittleEndian, t.Value.(uint16)); err != nil {
+			return fmt.Errorf("failed to write uint16 value: %v", err)
+		}
+	case TagTypeUInt8:
+		if err := binary.Write(dst, binary.LittleEndian, t.Value.(uint8)); err != nil {
+			return fmt.Errorf("failed to write uint8 value: %v", err)
+		}
+	default:
+		return fmt.Errorf("unsupported tag type: %d", t.Type)
+	}
+	
+	return nil
+}
+
+func (t *Tag) BytesCount() int {
+	count := 1 + 2 + len(t.Name) // type + name_len + name
+	
+	switch t.Type {
+	case TagTypeString:
+		count += 2 + len(t.Value.(string)) // value_len + value
+	case TagTypeUInt32:
+		count += 4
+	case TagTypeUInt16:
+		count += 2
+	case TagTypeUInt8:
+		count += 1
+	}
+	
+	return count
 }
 
 // Server tag types
