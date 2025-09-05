@@ -335,18 +335,33 @@ func (s *Session) AddTransfer(params *AddTransferParams) (*TransferHandle, error
 			time.Sleep(100 * time.Millisecond)
 			s.initiateTransferConnections(transfer)
 			
-			// Request sources from server if connected
+			// Request sources from all connected servers
+			time.Sleep(2 * time.Second) // Allow some time for connection setup
 			s.mutex.RLock()
-			activeServer := s.activeServerConn
+			connectedServers := make([]*ServerConnection, 0)
+			for _, serverConn := range s.serverConnections {
+				if serverConn.IsConnected() {
+					connectedServers = append(connectedServers, serverConn)
+				}
+			}
 			s.mutex.RUnlock()
 			
-			if activeServer != nil && activeServer.IsConnected() {
-				time.Sleep(2 * time.Second) // Allow some time for connection setup
-				if err := activeServer.RequestSources(transfer.GetHash()); err != nil {
-					fmt.Printf("[SERVER] Failed to request sources for new transfer %s: %v\n", transfer.name, err)
-				} else {
-					fmt.Printf("[SERVER] Requested sources for new transfer %s\n", transfer.name)
+			if len(connectedServers) > 0 {
+				fmt.Printf("[SERVER] Requesting sources for new transfer %s from %d servers\n", transfer.name, len(connectedServers))
+				for _, serverConn := range connectedServers {
+					go func(server *ServerConnection) {
+						if err := server.RequestSources(transfer.GetHash()); err != nil {
+							fmt.Printf("[SERVER] Failed to request sources for new transfer %s from %s: %v\n", transfer.name, server.identifier, err)
+						} else {
+							fmt.Printf("[SERVER] Requested sources for new transfer %s from %s\n", transfer.name, server.identifier)
+						}
+					}(serverConn)
+					
+					// Small delay between server requests
+					time.Sleep(1 * time.Second)
 				}
+			} else {
+				fmt.Printf("[SERVER] No connected servers available for new transfer %s\n", transfer.name)
 			}
 		}()
 	}
@@ -735,45 +750,81 @@ func (s *Session) connectToServers() {
 		return
 	}
 	
-	// Try to connect to servers in order
-	for _, server := range servers {
+	// Limit the number of simultaneous server connections to avoid overwhelming
+	maxConnections := 5
+	if len(servers) < maxConnections {
+		maxConnections = len(servers)
+	}
+	
+	fmt.Printf("[SERVER] Attempting to connect to %d servers simultaneously\n", maxConnections)
+	
+	// Try to connect to multiple servers simultaneously
+	connectedCount := 0
+	for i, server := range servers[:maxConnections] {
 		if !s.IsRunning() {
 			break
 		}
 		
-		addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", server.IP, server.Port))
-		if err != nil {
-			fmt.Printf("[SERVER] Failed to resolve server %s:%d - %v\n", server.IP, server.Port, err)
-			continue
+		// Small delay between connection attempts to avoid overwhelming
+		if i > 0 {
+			time.Sleep(1 * time.Second)
 		}
 		
-		serverConn := NewServerConnection(server.Name, addr, s)
-		
-		s.mutex.Lock()
-		s.serverConnections[server.Name] = serverConn
-		s.mutex.Unlock()
-		
-		if err := serverConn.Connect(); err != nil {
-			fmt.Printf("[SERVER] Failed to connect to %s - %v\n", server.Name, err)
-			continue
-		}
-		
-		// Set as active server connection
-		s.mutex.Lock()
-		s.activeServerConn = serverConn
-		s.mutex.Unlock()
-		
-		fmt.Printf("[SERVER] Successfully connected to server %s\n", server.Name)
-		
-		// Wait for handshake and start requesting sources
-		time.Sleep(5 * time.Second)
-		s.requestSourcesForAllTransfers()
-		
-		// Keep connection alive and monitor
-		go s.maintainServerConnection(serverConn)
-		
-		break // Use first successful connection
+		go func(srv ServerInfo) {
+			addr, err := net.ResolveTCPAddr("tcp", fmt.Sprintf("%s:%d", srv.IP, srv.Port))
+			if err != nil {
+				fmt.Printf("[SERVER] Failed to resolve server %s:%d - %v\n", srv.IP, srv.Port, err)
+				return
+			}
+			
+			serverConn := NewServerConnection(srv.Name, addr, s)
+			
+			s.mutex.Lock()
+			s.serverConnections[srv.Name] = serverConn
+			s.mutex.Unlock()
+			
+			if err := serverConn.Connect(); err != nil {
+				fmt.Printf("[SERVER] Failed to connect to %s - %v\n", srv.Name, err)
+				// Remove failed connection from map
+				s.mutex.Lock()
+				delete(s.serverConnections, srv.Name)
+				s.mutex.Unlock()
+				return
+			}
+			
+			// Set as active server connection (first connected server becomes primary)
+			s.mutex.Lock()
+			if s.activeServerConn == nil {
+				s.activeServerConn = serverConn
+				fmt.Printf("[SERVER] Set %s as primary server connection\n", srv.Name)
+			}
+			s.mutex.Unlock()
+			
+			fmt.Printf("[SERVER] Successfully connected to server %s\n", srv.Name)
+			connectedCount++
+			
+			// Wait for handshake completion
+			time.Sleep(5 * time.Second)
+			
+			// Start requesting sources from this server for all transfers  
+			if serverConn.IsConnected() {
+				s.requestSourcesFromServer(serverConn)
+			}
+			
+			// Keep connection alive and monitor
+			go s.maintainServerConnection(serverConn)
+		}(server)
 	}
+	
+	// Wait a bit for initial connections to establish
+	time.Sleep(10 * time.Second)
+	
+	// Report connection results
+	s.mutex.RLock()
+	actualConnected := len(s.serverConnections)
+	s.mutex.RUnlock()
+	
+	fmt.Printf("[SERVER] Connected to %d out of %d attempted servers\n", actualConnected, maxConnections)
 }
 
 // getAvailableServers returns a list of available servers
@@ -803,6 +854,9 @@ func (s *Session) getAvailableServers() []ServerInfo {
 		servers = append(servers, 
 			ServerInfo{Name: "eDonkeyServer No1", IP: "176.103.48.36", Port: 4242},
 			ServerInfo{Name: "eDonkeyServer No2", IP: "195.24.106.203", Port: 4661},
+			ServerInfo{Name: "eMule Security", IP: "80.208.228.241", Port: 8369},
+			ServerInfo{Name: "Razorback 2", IP: "195.245.244.243", Port: 4661},
+			ServerInfo{Name: "TV Underground", IP: "195.245.244.243", Port: 4662},
 		)
 	}
 	
@@ -828,21 +882,62 @@ func (s *Session) maintainServerConnection(serverConn *ServerConnection) {
 		case <-ticker.C:
 			if !serverConn.IsConnected() {
 				fmt.Printf("[SERVER] Lost connection to %s, attempting reconnect...\n", serverConn.identifier)
+				
+				// If this was the active server, try to set another one as active
+				s.mutex.Lock()
+				if s.activeServerConn == serverConn {
+					s.activeServerConn = nil
+					// Find another connected server to be primary
+					for _, otherServer := range s.serverConnections {
+						if otherServer != serverConn && otherServer.IsConnected() {
+							s.activeServerConn = otherServer
+							fmt.Printf("[SERVER] Switched primary server to %s\n", otherServer.identifier)
+							break
+						}
+					}
+				}
+				s.mutex.Unlock()
+				
+				// Try to reconnect
 				if err := serverConn.Connect(); err != nil {
-					fmt.Printf("[SERVER] Reconnection failed: %v\n", err)
+					fmt.Printf("[SERVER] Reconnection failed for %s: %v\n", serverConn.identifier, err)
+					
+					// Remove from connections map if reconnection consistently fails
+					s.mutex.Lock()
+					delete(s.serverConnections, serverConn.identifier)
+					s.mutex.Unlock()
+				} else {
+					fmt.Printf("[SERVER] Successfully reconnected to %s\n", serverConn.identifier)
+					
+					// Re-add to connections map
+					s.mutex.Lock()
+					s.serverConnections[serverConn.identifier] = serverConn
+					// Set as primary if we don't have one
+					if s.activeServerConn == nil {
+						s.activeServerConn = serverConn
+						fmt.Printf("[SERVER] Set reconnected %s as primary server\n", serverConn.identifier)
+					}
+					s.mutex.Unlock()
+					
+					// Request sources for all transfers from this reconnected server
+					time.Sleep(5 * time.Second) // Wait for handshake
+					s.requestSourcesFromServer(serverConn)
 				}
 			} else {
-				// Send periodic ping
+				// Send periodic ping to keep connection alive
 				serverConn.Ping()
 			}
 		}
 	}
 }
 
-// requestSourcesForAllTransfers requests peer sources for all active transfers
-func (s *Session) requestSourcesForAllTransfers() {
+// requestSourcesFromServer requests peer sources for all transfers from a specific server
+func (s *Session) requestSourcesFromServer(serverConn *ServerConnection) {
+	if serverConn == nil || !serverConn.IsConnected() {
+		return
+	}
+	
 	s.mutex.RLock()
-	activeServer := s.activeServerConn
 	transfers := make([]*Transfer, 0, len(s.transfers))
 	for _, transfer := range s.transfers {
 		if !transfer.IsFinished() {
@@ -851,20 +946,68 @@ func (s *Session) requestSourcesForAllTransfers() {
 	}
 	s.mutex.RUnlock()
 	
-	if activeServer == nil || !activeServer.IsConnected() {
+	if len(transfers) == 0 {
 		return
 	}
 	
-	fmt.Printf("[SERVER] Requesting sources for %d active transfers\n", len(transfers))
+	fmt.Printf("[SERVER] Requesting sources for %d transfers from server %s\n", len(transfers), serverConn.identifier)
 	
 	for _, transfer := range transfers {
-		if err := activeServer.RequestSources(transfer.GetHash()); err != nil {
-			fmt.Printf("[SERVER] Failed to request sources for %s: %v\n", transfer.name, err)
+		if err := serverConn.RequestSources(transfer.GetHash()); err != nil {
+			fmt.Printf("[SERVER] Failed to request sources for %s from %s: %v\n", transfer.name, serverConn.identifier, err)
 		} else {
-			fmt.Printf("[SERVER] Requested sources for transfer %s\n", transfer.name)
+			fmt.Printf("[SERVER] Requested sources for transfer %s from %s\n", transfer.name, serverConn.identifier)
 		}
 		
-		// Small delay between requests
+		// Small delay between requests to avoid overwhelming the server
 		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// requestSourcesForAllTransfers requests peer sources for all active transfers from all connected servers
+func (s *Session) requestSourcesForAllTransfers() {
+	s.mutex.RLock()
+	serverConnections := make([]*ServerConnection, 0, len(s.serverConnections))
+	for _, serverConn := range s.serverConnections {
+		if serverConn.IsConnected() {
+			serverConnections = append(serverConnections, serverConn)
+		}
+	}
+	transfers := make([]*Transfer, 0, len(s.transfers))
+	for _, transfer := range s.transfers {
+		if !transfer.IsFinished() {
+			transfers = append(transfers, transfer)
+		}
+	}
+	s.mutex.RUnlock()
+	
+	if len(serverConnections) == 0 {
+		fmt.Printf("[SERVER] No connected servers available for source requests\n")
+		return
+	}
+	
+	if len(transfers) == 0 {
+		return
+	}
+	
+	fmt.Printf("[SERVER] Requesting sources for %d transfers from %d connected servers\n", len(transfers), len(serverConnections))
+	
+	// Request sources from all connected servers
+	for _, serverConn := range serverConnections {
+		go func(server *ServerConnection) {
+			for _, transfer := range transfers {
+				if err := server.RequestSources(transfer.GetHash()); err != nil {
+					fmt.Printf("[SERVER] Failed to request sources for %s from %s: %v\n", transfer.name, server.identifier, err)
+				} else {
+					fmt.Printf("[SERVER] Requested sources for transfer %s from %s\n", transfer.name, server.identifier)
+				}
+				
+				// Small delay between requests
+				time.Sleep(300 * time.Millisecond)
+			}
+			
+			// Delay before next server to spread the load
+			time.Sleep(2 * time.Second)
+		}(serverConn)
 	}
 }

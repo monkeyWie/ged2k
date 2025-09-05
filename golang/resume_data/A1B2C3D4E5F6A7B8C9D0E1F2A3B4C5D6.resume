@@ -1,0 +1,19 @@
+{
+  "hash": {},
+  "size": 52428800,
+  "name": "example_archive.zip",
+  "download_directory": "./downloads/archives",
+  "downloaded": 0,
+  "pieces": [
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+  ],
+  "downloaded_blocks": [],
+  "peers": [],
+  "create_time": 1757056933,
+  "last_seen": 1757056933
+}
