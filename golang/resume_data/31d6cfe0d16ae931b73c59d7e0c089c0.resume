@@ -1,12 +1,20 @@
 {
   "hash": {},
-  "size": 1048576,
-  "name": "test.txt",
-  "download_directory": "/tmp/downloads",
-  "downloaded": 0,
-  "pieces": [],
-  "downloaded_blocks": [],
+  "size": 1024,
+  "name": "test_small.txt",
+  "download_directory": "./downloads",
+  "downloaded": 1024,
+  "pieces": [
+    false
+  ],
+  "downloaded_blocks": [
+    {
+      "piece_index": 0,
+      "offset": 0,
+      "length": 1024
+    }
+  ],
   "peers": [],
-  "create_time": 1757035394,
-  "last_seen": 1757035394
+  "create_time": 1757040262,
+  "last_seen": 1757040298
 }

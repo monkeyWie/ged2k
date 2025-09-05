@@ -5,30 +5,31 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 )
 
 // Server represents an ED2K server
 type Server struct {
-	IP          uint32
-	Port        uint16
-	Name        string
-	Description string
-	Ping        uint32
-	MaxUsers    uint32
-	Files       uint32
-	Users       uint32
-	LowIDUsers  uint32
-	Version     string
-	UDPFlags    uint32
-	Tags        []ServerTag
+	IP          uint32 `json:"IP"`
+	Port        uint16 `json:"Port"`
+	Name        string `json:"Name"`
+	Description string `json:"Description"`
+	Ping        uint32 `json:"Ping"`
+	MaxUsers    uint32 `json:"MaxUsers"`
+	Files       uint32 `json:"Files"`
+	Users       uint32 `json:"Users"`
+	LowIDUsers  uint32 `json:"LowIDUsers"`
+	Version     string `json:"Version"`
+	UDPFlags    uint32 `json:"UDPFlags"`
+	Tags        []Tag  `json:"Tags"`
 }
 
-// ServerTag represents a server information tag
-type ServerTag struct {
-	Type  byte
-	Name  string
-	Value interface{}
+// Tag represents a server information tag
+type Tag struct {
+	Type  byte        `json:"Type"`
+	Name  string      `json:"Name"`
+	Value interface{} `json:"Value"`
 }
 
 // Server tag types
@@ -66,36 +67,37 @@ const (
 
 // ServerMet represents a server.met file
 type ServerMet struct {
-	Version byte
-	Servers []Server
+	Version byte     `json:"Version"`
+	Servers []Server `json:"Servers"`
 }
 
-// ParseServerMet parses a server.met file from raw data
+// ParseServerMet parses a server.met file
 func ParseServerMet(data []byte) (*ServerMet, error) {
 	if len(data) < 5 {
 		return nil, errors.New("invalid server.met file: too short")
 	}
-
+	
 	serverMet := &ServerMet{}
 	offset := 0
-
+	
 	// Parse version
 	serverMet.Version = data[offset]
 	offset++
-
-	if serverMet.Version != 0x0E && serverMet.Version != 0x0F {
+	
+	// Accept common server.met versions
+	if serverMet.Version != 0x0E && serverMet.Version != 0x0F && serverMet.Version != 0xE0 {
 		return nil, fmt.Errorf("invalid server.met version: 0x%02X", serverMet.Version)
 	}
-
+	
 	// Parse number of servers
 	if len(data) < offset+4 {
 		return nil, errors.New("invalid server.met file: missing server count")
 	}
 	numServers := binary.LittleEndian.Uint32(data[offset : offset+4])
 	offset += 4
-
+	
 	serverMet.Servers = make([]Server, 0, numServers)
-
+	
 	// Parse each server
 	for i := uint32(0); i < numServers; i++ {
 		server, newOffset, err := parseServerEntry(data, offset)
@@ -105,38 +107,38 @@ func ParseServerMet(data []byte) (*ServerMet, error) {
 		serverMet.Servers = append(serverMet.Servers, server)
 		offset = newOffset
 	}
-
+	
 	return serverMet, nil
 }
 
 // parseServerEntry parses a single server entry from the data
 func parseServerEntry(data []byte, offset int) (Server, int, error) {
 	server := Server{}
-
+	
 	// Parse IP and port (6 bytes)
 	if len(data) < offset+6 {
 		return server, offset, errors.New("insufficient data for server IP/port")
 	}
-
+	
 	server.IP = binary.LittleEndian.Uint32(data[offset : offset+4])
 	server.Port = binary.LittleEndian.Uint16(data[offset+4 : offset+6])
 	offset += 6
-
+	
 	// Parse number of tags
 	if len(data) < offset+4 {
 		return server, offset, errors.New("insufficient data for tag count")
 	}
 	numTags := binary.LittleEndian.Uint32(data[offset : offset+4])
 	offset += 4
-
+	
 	// Parse tags
 	for i := uint32(0); i < numTags; i++ {
 		tag, newOffset, err := parseTag(data, offset)
 		if err != nil {
 			return server, offset, fmt.Errorf("error parsing tag %d: %v", i, err)
 		}
-
-		// Extract common server properties
+		
+		// Extract common server properties from tags
 		switch tag.Type {
 		case TagServerName:
 			if str, ok := tag.Value.(string); ok {
@@ -171,51 +173,55 @@ func parseServerEntry(data []byte, offset int) (Server, int, error) {
 				server.UDPFlags = val
 			}
 		}
-
+		
 		server.Tags = append(server.Tags, tag)
 		offset = newOffset
 	}
-
+	
 	return server, offset, nil
 }
 
 // parseTag parses a single tag from the data
-func parseTag(data []byte, offset int) (ServerTag, int, error) {
-	tag := ServerTag{}
-
+func parseTag(data []byte, offset int) (Tag, int, error) {
+	tag := Tag{}
+	
 	if len(data) < offset+1 {
 		return tag, offset, errors.New("insufficient data for tag type")
 	}
-
-	// Parse tag type and name
-	tagType := data[offset]
+	
+	// Parse tag value type
+	tagValueType := data[offset]
 	offset++
-
+	
 	if len(data) < offset+2 {
 		return tag, offset, errors.New("insufficient data for tag name length")
 	}
 	nameLen := binary.LittleEndian.Uint16(data[offset : offset+2])
 	offset += 2
-
-	if nameLen > 0 {
+	
+	if nameLen > 1 {
 		if len(data) < offset+int(nameLen) {
 			return tag, offset, errors.New("insufficient data for tag name")
 		}
 		tag.Name = string(data[offset : offset+int(nameLen)])
+		tag.Type = 0  // Tags with names have Type=0
 		offset += int(nameLen)
-	}
-
-	// Parse tag ID (1 byte) if name is empty
-	if nameLen == 0 {
+	} else if nameLen == 1 {
+		// Parse tag ID (1 byte) - this is actually the common case for server tags
 		if len(data) < offset+1 {
 			return tag, offset, errors.New("insufficient data for tag ID")
 		}
 		tag.Type = data[offset]
+		tag.Name = ""  // Tags with IDs have empty names
 		offset++
+	} else {
+		// nameLen == 0, which should not happen in normal server.met files
+		tag.Type = 0
+		tag.Name = ""
 	}
-
+	
 	// Parse tag value based on type
-	switch tagType {
+	switch tagValueType {
 	case TagTypeString:
 		if len(data) < offset+2 {
 			return tag, offset, errors.New("insufficient data for string length")
@@ -227,39 +233,40 @@ func parseTag(data []byte, offset int) (ServerTag, int, error) {
 		}
 		tag.Value = string(data[offset : offset+int(strLen)])
 		offset += int(strLen)
-
+		
 	case TagTypeUInt32:
 		if len(data) < offset+4 {
 			return tag, offset, errors.New("insufficient data for uint32 value")
 		}
 		tag.Value = binary.LittleEndian.Uint32(data[offset : offset+4])
 		offset += 4
-
+		
 	case TagTypeUInt16:
 		if len(data) < offset+2 {
 			return tag, offset, errors.New("insufficient data for uint16 value")
 		}
 		tag.Value = binary.LittleEndian.Uint16(data[offset : offset+2])
 		offset += 2
-
+		
 	case TagTypeUInt8:
 		if len(data) < offset+1 {
 			return tag, offset, errors.New("insufficient data for uint8 value")
 		}
 		tag.Value = data[offset]
 		offset++
-
+		
 	case TagTypeFloat32:
 		if len(data) < offset+4 {
 			return tag, offset, errors.New("insufficient data for float32 value")
 		}
-		tag.Value = binary.LittleEndian.Uint32(data[offset : offset+4]) // Store as uint32 for now
+		bits := binary.LittleEndian.Uint32(data[offset : offset+4])
+		tag.Value = math.Float32frombits(bits)
 		offset += 4
-
+		
 	default:
-		return tag, offset, fmt.Errorf("unsupported tag type: 0x%02X", tagType)
+		return tag, offset, fmt.Errorf("unsupported tag type: 0x%02X", tagValueType)
 	}
-
+	
 	return tag, offset, nil
 }
 

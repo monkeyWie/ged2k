@@ -129,17 +129,13 @@ type Session struct {
 	done                chan struct{}
 }
 
-// NewSession creates a new ed2k session
-func NewSession(settings *Settings) *Session {
+// NewSession creates a new ed2k session with custom resume data implementation
+func NewSession(settings *Settings, resumeData ResumeData) *Session {
 	if settings == nil {
 		settings = NewDefaultSettings()
 	}
 	
-	// Create persistence manager based on settings
-	var resumeData ResumeData
-	if settings.ResumeDataDirectory != "" {
-		resumeData = NewDiskResumeData(settings.ResumeDataDirectory)
-	} else {
+	if resumeData == nil {
 		resumeData = NewMemoryResumeData()
 	}
 	
@@ -154,6 +150,16 @@ func NewSession(settings *Settings) *Session {
 	}
 	
 	return session
+}
+
+// NewSessionWithDefaults creates a new ed2k session with default memory-based resume data
+func NewSessionWithDefaults(settings *Settings) *Session {
+	return NewSession(settings, NewMemoryResumeData())
+}
+
+// NewSessionWithDiskPersistence creates a new ed2k session with disk-based resume data
+func NewSessionWithDiskPersistence(settings *Settings, resumeDataDir string) *Session {
+	return NewSession(settings, NewDiskResumeData(resumeDataDir))
 }
 
 // Start starts the session

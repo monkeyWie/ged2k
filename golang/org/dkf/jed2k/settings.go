@@ -28,7 +28,6 @@ type Settings struct {
 	ReconnectToServer bool `json:"reconnect_to_server"`
 	ServerPingTimeout int64 `json:"server_ping_timeout"`
 	IncomingDirectory string `json:"incoming_directory"`
-	ResumeDataDirectory string `json:"resume_data_directory"`
 }
 
 // NewDefaultSettings creates settings with default values
@@ -56,7 +55,6 @@ func NewDefaultSettings() *Settings {
 		ReconnectToServer: false,
 		ServerPingTimeout: 0,
 		IncomingDirectory: "./downloads",
-		ResumeDataDirectory: "./resume",
 	}
 }
 

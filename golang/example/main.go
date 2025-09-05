@@ -34,7 +34,6 @@ func (ec *ExampleClient) Initialize() error {
 	settings.ListenPort = 4661
 	settings.UDPPort = 4662
 	settings.IncomingDirectory = "./downloads"
-	settings.ResumeDataDirectory = "./resume_data"
 	settings.ModName = "ged2k-example"
 	settings.ClientName = "ged2k Go Client"
 	
@@ -42,10 +41,17 @@ func (ec *ExampleClient) Initialize() error {
 	fmt.Printf("  Listen Port: %d\n", settings.ListenPort)
 	fmt.Printf("  UDP Port: %d\n", settings.UDPPort)
 	fmt.Printf("  Download Directory: %s\n", settings.IncomingDirectory)
-	fmt.Printf("  Resume Data Directory: %s\n", settings.ResumeDataDirectory)
 	
-	// Create session
-	ec.session = jed2k.NewSession(settings)
+	// Create session with disk-based persistence
+	fmt.Println("\n=== Configuring Persistence ===")
+	fmt.Println("Available persistence options:")
+	fmt.Println("  1. Memory-based (data lost on restart)")  
+	fmt.Println("  2. Disk-based (data persisted to ./resume_data)")
+	fmt.Println("Using disk-based persistence for this example...")
+	ec.session = jed2k.NewSessionWithDiskPersistence(settings, "./resume_data")
+	
+	// Example showing memory-based persistence (commented out):
+	// ec.session = jed2k.NewSessionWithDefaults(settings)
 	
 	// Configure server list
 	fmt.Println("\n=== Configuring Server List ===")

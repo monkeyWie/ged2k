@@ -1,12 +1,200 @@
 {
   "hash": {},
   "size": 104857600,
-  "name": "video.mp4",
-  "download_directory": "./downloads",
-  "downloaded": 0,
-  "pieces": [],
-  "downloaded_blocks": [],
+  "name": "example_video.mp4",
+  "download_directory": "./downloads/videos",
+  "downloaded": 335518,
+  "pieces": [
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+  ],
+  "downloaded_blocks": [
+    {
+      "piece_index": 0,
+      "offset": 0,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 9728,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 19456,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 29184,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 38912,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 48640,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 58368,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 68096,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 77824,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 87552,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 97280,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 107008,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 116736,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 126464,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 136192,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 145920,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 155648,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 165376,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 175104,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 184832,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 194560,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 204288,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 214016,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 223744,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 233472,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 243200,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 252928,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 262656,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 272384,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 282112,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 291840,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 301568,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 311296,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 321024,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 330752,
+      "length": 4766
+    }
+  ],
   "peers": [],
-  "create_time": 1756982666,
-  "last_seen": 1756982666
+  "create_time": 1757040207,
+  "last_seen": 1757040223
 }

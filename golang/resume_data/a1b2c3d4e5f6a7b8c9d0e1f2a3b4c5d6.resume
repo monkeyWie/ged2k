@@ -1,12 +1,390 @@
 {
   "hash": {},
-  "size": 2048,
-  "name": "test2.txt",
-  "download_directory": "./downloads",
-  "downloaded": 0,
-  "pieces": [],
-  "downloaded_blocks": [],
+  "size": 52428800,
+  "name": "example_archive.zip",
+  "download_directory": "./downloads/archives",
+  "downloaded": 717816,
+  "pieces": [
+    false,
+    false,
+    false,
+    false,
+    false,
+    false
+  ],
+  "downloaded_blocks": [
+    {
+      "piece_index": 0,
+      "offset": 0,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 9728,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 19456,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 29184,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 38912,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 48640,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 58368,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 68096,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 77824,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 87552,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 97280,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 107008,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 116736,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 126464,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 136192,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 145920,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 155648,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 165376,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 175104,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 184832,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 194560,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 204288,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 214016,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 223744,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 233472,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 243200,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 252928,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 262656,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 272384,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 282112,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 291840,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 301568,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 311296,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 321024,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 330752,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 340480,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 350208,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 359936,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 369664,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 379392,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 389120,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 398848,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 408576,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 418304,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 428032,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 437760,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 447488,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 457216,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 466944,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 476672,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 486400,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 496128,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 505856,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 515584,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 525312,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 535040,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 544768,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 554496,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 564224,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 573952,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 583680,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 593408,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 603136,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 612864,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 622592,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 632320,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 642048,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 651776,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 661504,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 671232,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 680960,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 690688,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 700416,
+      "length": 9728
+    },
+    {
+      "piece_index": 0,
+      "offset": 710144,
+      "length": 7672
+    }
+  ],
   "peers": [],
-  "create_time": 1756981534,
-  "last_seen": 1756981534
+  "create_time": 1757040207,
+  "last_seen": 1757040223
 }
