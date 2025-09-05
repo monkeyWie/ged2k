@@ -12,12 +12,14 @@ import (
 	"time"
 
 	"github.com/monkeyWie/ged2k/golang/org/dkf/jed2k"
+	"github.com/monkeyWie/ged2k/golang/org/dkf/jed2k/protocol"
 )
 
 // ExampleClient demonstrates comprehensive usage of the ed2k client
 type ExampleClient struct {
-	session *jed2k.Session
-	running bool
+	session           *jed2k.Session
+	running           bool
+	lastSearchResults []*protocol.SearchEntry
 }
 
 // NewExampleClient creates a new example client
@@ -372,6 +374,104 @@ func (ec *ExampleClient) DemonstratePersistence() {
 	_ = diskPersistence
 }
 
+// SearchFiles performs a search for files on the ed2k network
+func (ec *ExampleClient) SearchFiles(query, fileType string, minSize, maxSize uint64) error {
+	fmt.Printf("\n=== Searching Files ===\n")
+	fmt.Printf("Query: %s\n", query)
+	if fileType != "" {
+		fmt.Printf("File Type: %s\n", fileType)
+	}
+	if minSize > 0 {
+		fmt.Printf("Min Size: %.2f MB\n", float64(minSize)/(1024*1024))
+	}
+	if maxSize > 0 {
+		fmt.Printf("Max Size: %.2f MB\n", float64(maxSize)/(1024*1024))
+	}
+	
+	// Perform search
+	if err := ec.session.SearchSimple(query, fileType, minSize, maxSize); err != nil {
+		return fmt.Errorf("failed to perform search: %v", err)
+	}
+	
+	fmt.Printf("✓ Search request sent to all connected servers\n")
+	fmt.Println("Use 'results' command to view search results when available")
+	
+	return nil
+}
+
+// ShowSearchResults displays the last search results
+func (ec *ExampleClient) ShowSearchResults() {
+	fmt.Printf("\n=== Search Results ===\n")
+	
+	if len(ec.lastSearchResults) == 0 {
+		fmt.Println("No search results available.")
+		fmt.Println("Use 'search <query>' to perform a search first.")
+		return
+	}
+	
+	fmt.Printf("Found %d result(s):\n\n", len(ec.lastSearchResults))
+	fmt.Printf("%-3s %-40s %-10s %-8s %-12s\n", "#", "Name", "Size", "Sources", "Hash")
+	fmt.Println(strings.Repeat("-", 80))
+	
+	for i, entry := range ec.lastSearchResults {
+		name := entry.GetFilename()
+		if len(name) > 38 {
+			name = name[:35] + "..."
+		}
+		
+		sizeStr := formatBytes(int64(entry.GetFilesize()))
+		
+		fmt.Printf("%-3d %-40s %-10s %-8d %-12s\n",
+			i+1, name, sizeStr, entry.GetSources(), entry.GetHash().String()[:12]+"...")
+	}
+	
+	fmt.Println("\nUse 'load <index>' to add a result to downloads")
+}
+
+// LoadSearchResult adds a search result to downloads
+func (ec *ExampleClient) LoadSearchResult(index int) error {
+	if len(ec.lastSearchResults) == 0 {
+		return fmt.Errorf("no search results available")
+	}
+	
+	if index < 1 || index > len(ec.lastSearchResults) {
+		return fmt.Errorf("invalid result index: %d (available: 1-%d)", index, len(ec.lastSearchResults))
+	}
+	
+	entry := ec.lastSearchResults[index-1]
+	
+	fmt.Printf("\n=== Adding Search Result ===\n")
+	fmt.Printf("Name: %s\n", entry.GetFilename())
+	fmt.Printf("Size: %.2f MB\n", float64(entry.GetFilesize())/(1024*1024))
+	fmt.Printf("Hash: %s\n", entry.GetHash().String())
+	fmt.Printf("Sources: %d\n", entry.GetSources())
+	
+	// Convert to ed2k link and add as transfer
+	link := entry.ToED2KLink()
+	handle, err := ec.session.AddTransferFromLink(link, "./downloads")
+	if err != nil {
+		return fmt.Errorf("failed to add transfer: %v", err)
+	}
+	
+	fmt.Printf("✓ Transfer added successfully\n")
+	fmt.Printf("  Transfer Hash: %s\n", handle.GetHash().String())
+	
+	return nil
+}
+
+// ProcessSearchAlerts processes incoming search alerts
+func (ec *ExampleClient) ProcessSearchAlerts() {
+	// This would be called periodically to process search results
+	// In a real implementation, you'd have an alert processing loop
+	// For now, we'll simulate getting search results
+}
+
+// UpdateSearchResults updates the stored search results from alerts
+func (ec *ExampleClient) UpdateSearchResults(results []*protocol.SearchEntry) {
+	ec.lastSearchResults = results
+	fmt.Printf("\n[SEARCH UPDATE] Received %d new search results\n", len(results))
+}
+
 // Shutdown gracefully shuts down the client
 func (ec *ExampleClient) Shutdown() error {
 	if !ec.running {
@@ -402,6 +502,9 @@ func (ec *ExampleClient) RunInteractiveMode() {
 	fmt.Println("  resume <index>                  - Resume a transfer")
 	fmt.Println("  pauseall                        - Pause all transfers")
 	fmt.Println("  resumeall                       - Resume all transfers")
+	fmt.Println("  search <query> [filetype] [minsize] [maxsize] - Search for files")
+	fmt.Println("  results                         - Show last search results")
+	fmt.Println("  load <result_index>             - Add search result to downloads")
 	fmt.Println("  stats                           - Show session statistics")
 	fmt.Println("  persistence                     - Show persistence options")
 	fmt.Println("  help                            - Show this help")
@@ -517,6 +620,56 @@ func (ec *ExampleClient) RunInteractiveMode() {
 				fmt.Println("✓ All transfers resumed")
 			}
 			
+		case "search":
+			if len(parts) < 2 {
+				fmt.Println("Usage: search <query> [filetype] [minsize_mb] [maxsize_mb]")
+				fmt.Println("Examples:")
+				fmt.Println("  search \"game of thrones\"")
+				fmt.Println("  search music Audio 0 500")
+				fmt.Println("  search documentary Video")
+				continue
+			}
+			
+			query := parts[1]
+			fileType := ""
+			var minSize, maxSize uint64
+			
+			if len(parts) > 2 {
+				fileType = parts[2]
+			}
+			if len(parts) > 3 {
+				if minMB, err := strconv.Atoi(parts[3]); err == nil && minMB > 0 {
+					minSize = uint64(minMB) * 1024 * 1024
+				}
+			}
+			if len(parts) > 4 {
+				if maxMB, err := strconv.Atoi(parts[4]); err == nil && maxMB > 0 {
+					maxSize = uint64(maxMB) * 1024 * 1024
+				}
+			}
+			
+			if err := ec.SearchFiles(query, fileType, minSize, maxSize); err != nil {
+				fmt.Printf("Error: %v\n", err)
+			}
+			
+		case "results":
+			ec.ShowSearchResults()
+			
+		case "load":
+			if len(parts) < 2 {
+				fmt.Println("Usage: load <result_index>")
+				fmt.Println("Use 'results' to see available search results")
+				continue
+			}
+			index, err := strconv.Atoi(parts[1])
+			if err != nil {
+				fmt.Println("Invalid result index")
+				continue
+			}
+			if err := ec.LoadSearchResult(index); err != nil {
+				fmt.Printf("Error: %v\n", err)
+			}
+			
 		case "stats":
 			ec.ShowSessionStats()
 			
@@ -533,6 +686,9 @@ func (ec *ExampleClient) RunInteractiveMode() {
 			fmt.Println("  resume <index>                  - Resume a transfer")
 			fmt.Println("  pauseall                        - Pause all transfers")
 			fmt.Println("  resumeall                       - Resume all transfers")
+			fmt.Println("  search <query> [filetype] [minsize] [maxsize] - Search for files")
+			fmt.Println("  results                         - Show last search results")
+			fmt.Println("  load <result_index>             - Add search result to downloads")
 			fmt.Println("  stats                           - Show session statistics")
 			fmt.Println("  persistence                     - Show persistence options")
 			fmt.Println("  help                            - Show this help")

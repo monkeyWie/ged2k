@@ -1,6 +1,7 @@
 package jed2k
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/monkeyWie/ged2k/golang/org/dkf/jed2k/alert"
 	"github.com/monkeyWie/ged2k/golang/org/dkf/jed2k/protocol"
 )
 
@@ -228,6 +230,8 @@ func (sc *ServerConnection) processIncomingData(data []byte) {
 		sc.handleServerInfo(payload)  
 	case 0x46: // Found file sources
 		sc.handleFoundFileSources(payload)
+	case 0x33: // Search result
+		sc.handleSearchResult(payload)
 	default:
 		if sc.debugLogging {
 			fmt.Printf("[SERVER] Unknown opcode 0x%02x from %s\n", opcode, sc.identifier)
@@ -476,4 +480,68 @@ func (sc *ServerConnection) Ping() error {
 	}
 	
 	return sc.sendPacket(0xE3, 0x60, []byte{}) // Ping opcode
+}
+
+// Search sends a search request to the server
+func (sc *ServerConnection) Search(request *protocol.SearchRequest) error {
+	sc.mutex.RLock()
+	defer sc.mutex.RUnlock()
+
+	if !sc.connected || !sc.handshakeDone {
+		return fmt.Errorf("server not connected or handshake not complete")
+	}
+
+	// Serialize search request
+	buffer := bytes.NewBuffer(nil)
+	
+	if err := request.Put(buffer); err != nil {
+		return fmt.Errorf("failed to serialize search request: %v", err)
+	}
+
+	if sc.debugLogging {
+		fmt.Printf("[SERVER] → Sending search request to %s: %s\n", sc.identifier, request.String())
+	}
+
+	// Send search request packet (0xE3 protocol, 0x58 opcode for search)
+	return sc.sendPacket(0xE3, 0x58, buffer.Bytes())
+}
+
+// handleSearchResult processes search results from server
+func (sc *ServerConnection) handleSearchResult(payload []byte) {
+	if sc.debugLogging {
+		fmt.Printf("[SERVER] ← Search result received from %s, payload size=%d bytes\n", 
+			sc.identifier, len(payload))
+	}
+
+	// Parse search result
+	buffer := bytes.NewBuffer(payload)
+	result := protocol.NewSearchResult()
+	
+	if err := result.Get(buffer); err != nil {
+		if sc.debugLogging {
+			fmt.Printf("[SERVER] Failed to parse search result from %s: %v\n", 
+				sc.identifier, err)
+		}
+		return
+	}
+
+	results := result.GetResults()
+	if sc.debugLogging {
+		fmt.Printf("[SEARCH] ← Server %s returned %d search results (more=%v)\n", 
+			sc.identifier, len(results), result.HasMoreResults())
+		
+		// Log each result
+		for i, entry := range results {
+			fmt.Printf("[SEARCH]   Result %d: %s (%.2f MB, %d sources) - %s\n",
+				i+1,
+				entry.GetFilename(),
+				float64(entry.GetFilesize())/(1024*1024),
+				entry.GetSources(),
+				entry.GetHash().String()[:16]+"...")
+		}
+	}
+
+	// Post search result alert to session
+	searchAlert := alert.NewSearchResultAlert(result, fmt.Sprintf("Server %s", sc.identifier))
+	sc.session.alertManager.PostAlert(searchAlert)
 }

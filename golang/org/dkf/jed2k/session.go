@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/monkeyWie/ged2k/golang/org/dkf/jed2k/alert"
 	"github.com/monkeyWie/ged2k/golang/org/dkf/jed2k/protocol"
 )
 
@@ -116,6 +117,7 @@ type Session struct {
 	serverList          *ServerList
 	nodesData           *NodesData
 	persistenceManager  *PersistenceManager
+	alertManager        *alert.AlertManager
 	
 	// Server connections for peer discovery
 	serverConnections   map[string]*ServerConnection
@@ -149,6 +151,7 @@ func NewSession(settings *Settings, resumeData ResumeData) *Session {
 		serverList:         NewServerList(),
 		nodesData:          NewNodesData(),
 		persistenceManager: NewPersistenceManager(resumeData),
+		alertManager:       alert.NewAlertManager(1000),
 		serverConnections:  make(map[string]*ServerConnection),
 		done:               make(chan struct{}),
 	}
@@ -987,4 +990,65 @@ func (s *Session) requestSourcesForSpecificTransfer(transfer *Transfer) {
 			}
 		}(serverConn)
 	}
+}
+
+// Search performs a search across all connected servers
+func (s *Session) Search(request *protocol.SearchRequest) error {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	if !s.running {
+		return fmt.Errorf("session not running")
+	}
+
+	// Get all connected servers
+	var connectedServers []*ServerConnection
+	for _, serverConn := range s.serverConnections {
+		if serverConn.IsConnected() {
+			connectedServers = append(connectedServers, serverConn)
+		}
+	}
+
+	if len(connectedServers) == 0 {
+		return fmt.Errorf("no connected servers available for search")
+	}
+
+	// Send search request to all connected servers
+	for _, serverConn := range connectedServers {
+		go func(server *ServerConnection) {
+			if err := server.Search(request); err != nil {
+				fmt.Printf("[SEARCH] Failed to send search request to %s: %v\n", server.identifier, err)
+				// Post search failed alert
+				failedAlert := alert.NewSearchFailedAlert(request.String(), fmt.Sprintf("server %s: %v", server.identifier, err))
+				s.alertManager.PostAlert(failedAlert)
+			} else {
+				fmt.Printf("[SEARCH] Search request sent to %s: %s\n", server.identifier, request.String())
+			}
+		}(serverConn)
+	}
+
+	return nil
+}
+
+// SearchSimple performs a simple text-based search
+func (s *Session) SearchSimple(query string, fileType string, minSize, maxSize uint64) error {
+	request := protocol.MakeSimpleSearchRequest(query, fileType, minSize, maxSize)
+	return s.Search(request)
+}
+
+// GetLastSearchResults returns the last search results (if any)
+func (s *Session) GetLastSearchResults() []*protocol.SearchEntry {
+	// In a real implementation, you'd store the last search results
+	// For now, return empty slice
+	return make([]*protocol.SearchEntry, 0)
+}
+
+// PopAlert pops the next alert from the queue
+func (s *Session) PopAlert() alert.Alert {
+	return s.alertManager.PopAlert()
+}
+
+// GetAlerts returns all pending alerts
+func (s *Session) GetAlerts() []alert.Alert {
+	return s.alertManager.GetAlerts()
 }

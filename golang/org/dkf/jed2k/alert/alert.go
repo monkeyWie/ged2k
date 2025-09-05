@@ -1,6 +1,9 @@
 package alert
 
-import "github.com/monkeyWie/ged2k/golang/org/dkf/jed2k"
+import (
+	"sync"
+	"time"
+)
 
 // Severity represents alert severity levels
 type Severity int
@@ -69,11 +72,82 @@ type BaseAlert struct {
 // NewBaseAlert creates a new base alert
 func NewBaseAlert() *BaseAlert {
 	return &BaseAlert{
-		creationTime: jed2k.CurrentTime(),
+		creationTime: time.Now().Unix(),
 	}
 }
 
 // GetCreationTime returns the alert creation time
 func (ba *BaseAlert) GetCreationTime() int64 {
 	return ba.creationTime
+}
+
+// AlertManager manages alert posting and retrieval
+type AlertManager struct {
+	alerts  []Alert
+	mutex   sync.RWMutex
+	maxSize int
+}
+
+// NewAlertManager creates a new alert manager
+func NewAlertManager(maxSize int) *AlertManager {
+	if maxSize <= 0 {
+		maxSize = 1000 // Default max size
+	}
+	return &AlertManager{
+		alerts:  make([]Alert, 0, maxSize),
+		maxSize: maxSize,
+	}
+}
+
+// PostAlert adds an alert to the queue
+func (am *AlertManager) PostAlert(alert Alert) {
+	am.mutex.Lock()
+	defer am.mutex.Unlock()
+
+	am.alerts = append(am.alerts, alert)
+	
+	// Keep only the most recent alerts if we exceed max size
+	if len(am.alerts) > am.maxSize {
+		am.alerts = am.alerts[len(am.alerts)-am.maxSize:]
+	}
+}
+
+// PopAlert retrieves and removes the oldest alert
+func (am *AlertManager) PopAlert() Alert {
+	am.mutex.Lock()
+	defer am.mutex.Unlock()
+
+	if len(am.alerts) == 0 {
+		return nil
+	}
+	
+	alert := am.alerts[0]
+	am.alerts = am.alerts[1:]
+	return alert
+}
+
+// GetAlerts returns all alerts without removing them
+func (am *AlertManager) GetAlerts() []Alert {
+	am.mutex.RLock()
+	defer am.mutex.RUnlock()
+
+	result := make([]Alert, len(am.alerts))
+	copy(result, am.alerts)
+	return result
+}
+
+// Clear removes all alerts
+func (am *AlertManager) Clear() {
+	am.mutex.Lock()
+	defer am.mutex.Unlock()
+
+	am.alerts = am.alerts[:0]
+}
+
+// Count returns the number of pending alerts
+func (am *AlertManager) Count() int {
+	am.mutex.RLock()
+	defer am.mutex.RUnlock()
+
+	return len(am.alerts)
 }
