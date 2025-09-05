@@ -1,8 +1,9 @@
 package jed2k
 
 import (
+	"crypto/rand"
 	"fmt"
-	"math/rand"
+	mathrand "math/rand"
 	"path/filepath"
 	"sync"
 	"time"
@@ -108,6 +109,12 @@ type Transfer struct {
 	finished          bool
 	fileHandler       FileHandler
 	
+	// Piece management
+	pieceSize         int64
+	numPieces         int
+	pieces            *protocol.BitField  // tracks completed pieces
+	pieceData         [][]byte           // actual downloaded piece data
+	
 	// Synchronization
 	mutex             sync.RWMutex
 	
@@ -119,6 +126,10 @@ type Transfer struct {
 func NewTransfer(h *hash.Hash, size int64, name, downloadDir string) *Transfer {
 	// Create the full file path
 	filePath := filepath.Join(downloadDir, name)
+	
+	// Calculate piece information (similar to BitTorrent - 256KB pieces)
+	pieceSize := int64(256 * 1024) // 256KB pieces
+	numPieces := int((size + pieceSize - 1) / pieceSize) // ceiling division
 	
 	t := &Transfer{
 		hash:              h,
@@ -133,6 +144,10 @@ func NewTransfer(h *hash.Hash, size int64, name, downloadDir string) *Transfer {
 		statistics:        NewStatistics(),
 		speedMonitor:      NewSpeedMonitor(30), // 30 samples for averaging
 		fileHandler:       NewDefaultFileHandler(filePath),
+		pieceSize:         pieceSize,
+		numPieces:         numPieces,
+		pieces:            protocol.NewBitFieldWithSize(numPieces),
+		pieceData:         make([][]byte, numPieces),
 	}
 	
 	// Create policy for peer management
@@ -466,8 +481,8 @@ func (t *Transfer) simulateSuccessfulPeerConnection(currentTime int64) {
 		if !peerInfo.Connected {
 			// Mark as connected and simulate some activity
 			peerInfo.Connected = true
-			peerInfo.DownloadRate = float64(5*1024 + rand.Intn(20*1024)) // 5-25 KB/s
-			peerInfo.UploadRate = float64(rand.Intn(5*1024)) // 0-5 KB/s
+			peerInfo.DownloadRate = float64(50*1024 + mathrand.Intn(100*1024)) // 50-150 KB/s
+			peerInfo.UploadRate = float64(mathrand.Intn(10*1024)) // 0-10 KB/s
 			break
 		}
 	}
@@ -497,28 +512,59 @@ func (t *Transfer) updateStatisticsAndProgress() {
 	t.downloadRate = totalDownloadRate
 	t.uploadRate = totalUploadRate
 	
-	// Simple progress simulation
+	// Simple progress simulation - download pieces
 	if activeConnections > 0 && !t.finished {
-		bytesDownloaded := int64(totalDownloadRate * 2) // Assume 2-second interval
-		newDownloaded := t.downloaded + bytesDownloaded
-		if newDownloaded > t.size {
-			newDownloaded = t.size
+		// Simulate piece downloading
+		t.simulatePieceDownload(totalDownloadRate)
+		
+		// Update statistics
+		t.uploaded += int64(totalUploadRate * 2)
+		
+		// Check if download is complete
+		if t.downloaded >= t.size {
 			t.finished = true
 			t.state = TransferStateCompleted
 			
 			// Write completed file to disk
 			t.writeCompletedFile()
-		}
-		t.downloaded = newDownloaded
-		t.uploaded += int64(totalUploadRate * 2)
-		
-		if !t.finished && t.state != TransferStateError {
+		} else if t.state != TransferStateError {
 			t.state = TransferStateDownloading
 		}
 	}
 }
 
-// writeCompletedFile creates the actual downloaded file on disk
+// simulatePieceDownload simulates downloading pieces of the file
+func (t *Transfer) simulatePieceDownload(downloadRate float64) {
+	bytesDownloaded := int64(downloadRate * 2) // Assume 2-second interval
+	
+	// Find incomplete pieces to download
+	for i := 0; i < t.numPieces && bytesDownloaded > 0; i++ {
+		if !t.pieces.GetBit(i) {
+			// Calculate piece size for this piece (last piece might be smaller)
+			currentPieceSize := t.pieceSize
+			if i == t.numPieces-1 {
+				// Last piece - calculate remaining size
+				remainingSize := t.size - int64(i)*t.pieceSize
+				if remainingSize < currentPieceSize {
+					currentPieceSize = remainingSize
+				}
+			}
+			
+			// Generate random data for this piece (simulating actual download)
+			if t.pieceData[i] == nil {
+				t.pieceData[i] = make([]byte, currentPieceSize)
+				rand.Read(t.pieceData[i]) // Fill with random data
+			}
+			
+			// Mark piece as complete
+			t.pieces.SetBit(i)
+			t.downloaded += currentPieceSize
+			bytesDownloaded -= currentPieceSize
+		}
+	}
+}
+
+// writeCompletedFile assembles and writes the completed file from downloaded pieces
 func (t *Transfer) writeCompletedFile() {
 	if t.fileHandler == nil {
 		return
@@ -531,25 +577,21 @@ func (t *Transfer) writeCompletedFile() {
 	}
 	defer t.fileHandler.Close()
 	
-	// Create sample content representing the "downloaded" file
-	// In a real implementation, this would be the actual downloaded data
-	sampleContent := fmt.Sprintf("Downloaded file: %s\nSize: %d bytes\nHash: %s\nCompleted at: %s\n\n", 
-		t.name, t.size, t.hash.String(), time.Now().Format(time.RFC3339))
-	
-	// Add padding to reach the expected file size
-	contentBytes := []byte(sampleContent)
-	if int64(len(contentBytes)) < t.size {
-		padding := make([]byte, t.size-int64(len(contentBytes)))
-		for i := range padding {
-			padding[i] = byte('X') // Fill with 'X' characters
+	// Assemble file from pieces
+	var currentOffset int64 = 0
+	for i := 0; i < t.numPieces; i++ {
+		if !t.pieces.GetBit(i) || t.pieceData[i] == nil {
+			fmt.Printf("Warning: Missing piece %d for file %s\n", i, t.name)
+			continue
 		}
-		contentBytes = append(contentBytes, padding...)
-	}
-	
-	// Write the content
-	if _, err := t.fileHandler.Write(0, contentBytes); err != nil {
-		fmt.Printf("Warning: Failed to write file content for %s: %v\n", t.name, err)
-		return
+		
+		// Write piece data to file
+		if _, err := t.fileHandler.Write(currentOffset, t.pieceData[i]); err != nil {
+			fmt.Printf("Warning: Failed to write piece %d for file %s: %v\n", i, t.name, err)
+			return
+		}
+		
+		currentOffset += int64(len(t.pieceData[i]))
 	}
 	
 	// Sync to ensure data is written to disk
