@@ -336,13 +336,154 @@ func (h *PacketHeader) PayloadSize() int {
 
 Clients connect to servers using TCP on the standard port (typically 4661).
 
-#### 4.1.1 Login Sequence
+### 4.2 Client User Hash Generation Specification
+
+**Client User Hash** is a unique 16-byte identifier for each ed2k client, used for network identification and tracking. The generation follows specific rules based on the Java implementation.
+
+#### 4.2.1 User Agent Hash Constants
+
+Each client software has a specific user agent hash for identification:
+
+```go
+// Predefined user agent hash constants
+const (
+    // Official eDonkey client
+    UserAgentEDonkey = "31D6CFE0D16AE931B73C59D7E0C089C0"
+    
+    // eMule client (most common)
+    UserAgentEmule = "31D6CFE0D10EE931B73C59D7E0C06FC0"
+    
+    // libed2k library
+    UserAgentLibed2k = "31D6CFE0D14CE931B73C59D7E0C04BC0"
+)
+
+var (
+    HashTerminal = HashFromString("31D6CFE0D16AE931B73C59D7E0C089C0")
+    HashLibed2k  = HashFromString("31D6CFE0D14CE931B73C59D7E0C04BC0") 
+    HashEmule    = HashFromString("31D6CFE0D10EE931B73C59D7E0C06FC0")
+)
+
+type ClientSettings struct {
+    UserAgent Hash   // Client user agent hash
+    ModName   string // Module name
+    Version   int    // Client version
+}
+
+func NewClientSettings() *ClientSettings {
+    return &ClientSettings{
+        UserAgent: HashFromString(UserAgentEmule), // Default to eMule identification
+        ModName:   "ged2k",
+        Version:   0x3c,
+    }
+}
+```
+
+#### 4.2.2 Random Client Hash Generation
+
+For normal client identification, generate a random 16-byte hash following these rules:
+
+```go
+import (
+    "crypto/rand"
+    "crypto/md4"
+    "time"
+)
+
+// Generate random client user hash
+func GenerateClientUserHash(isEmuleCompatible bool) Hash {
+    // Generate 16 bytes of random data
+    randomBytes := make([]byte, 16)
+    _, err := rand.Read(randomBytes)
+    if err != nil {
+        // Fallback to timestamp-based generation
+        timestamp := time.Now().UnixNano()
+        for i := 0; i < 16; i += 8 {
+            binary.LittleEndian.PutUint64(randomBytes[i:], uint64(timestamp+int64(i)))
+        }
+    }
+    
+    // Set eMule compatibility markers if requested
+    if isEmuleCompatible {
+        randomBytes[5] = 14   // 6th byte = 14 (eMule identification)
+        randomBytes[14] = 111 // 15th byte = 111 (eMule identification)
+    }
+    
+    var hash Hash
+    copy(hash[:], randomBytes)
+    return hash
+}
+
+// Generate deterministic user hash from seed (MAC address, etc.)
+func GenerateDeterministicUserHash(seed string, isEmuleCompatible bool) Hash {
+    hasher := md4.New()
+    hasher.Write([]byte(seed))
+    hasher.Write([]byte(time.Now().Format("2006-01-02"))) // Daily variation
+    
+    hashBytes := hasher.Sum(nil)
+    
+    if isEmuleCompatible {
+        hashBytes[5] = 14
+        hashBytes[14] = 111
+    }
+    
+    var hash Hash
+    copy(hash[:], hashBytes)
+    return hash
+}
+```
+
+**Design Rationale:** The user hash serves multiple purposes:
+1. **Server Login**: Identifies the client to servers
+2. **Peer Connections**: Used in peer-to-peer handshakes
+3. **Transfer Tracking**: Servers track upload/download statistics per client
+4. **Reconnection**: Allows servers to recognize returning clients
+
+The eMule compatibility bytes (5th=14, 14th=111) ensure compatibility with the existing eMule network and proper client recognition.
+
+#### 4.2.3 Hash Usage in Protocol
+
+The client user hash is used in several protocol operations:
+
+```go
+// Login request with generated user hash
+func LoginToServer(conn net.Conn, settings *ClientSettings) error {
+    userHash := settings.UserAgent
+    if userHash == (Hash{}) {
+        userHash = GenerateClientUserHash(true) // Generate eMule-compatible hash
+    }
+    
+    loginReq := &LoginRequest{
+        Hash: userHash,
+        Port: uint16(settings.ListenPort),
+        Tags: []Tag{
+            NewTag(TagTypeString, "name", settings.ModName),
+            NewTag(TagTypeUInt32, "version", uint32(settings.Version)),
+        },
+    }
+    
+    return sendLoginRequest(conn, loginReq)
+}
+
+// Peer handshake with user hash
+func CreateHelloPacket(userHash Hash, nick string, port uint16) *HelloPacket {
+    return &HelloPacket{
+        UserHash: userHash,
+        Port:     port,
+        Properties: []Tag{
+            NewTag(TagTypeString, "", nick),
+            NewTag(TagTypeUInt32, "", makeEmuleVersion(0, 60, 0)),
+        },
+    }
+}
+```
+
+### 4.3 Login Sequence
 
 1. **Client → Server: Login Request (0x01)**
 2. **Server → Client: ID Change (0x40)** 
 3. **Server → Client: Server Message (0x38)** (optional)
 
-#### 4.1.2 Login Request Packet
+#### 4.3.1 Login Request Packet
 
 ```
 +----------+----------+----------+----------+----------+----------+
