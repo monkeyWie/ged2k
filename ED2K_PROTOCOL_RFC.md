@@ -224,16 +224,28 @@ ED2K uses two transport protocols:
 All ed2k packets follow a common header format:
 
 ```
-+----------+----------+----------+----------+----------+----------+
-| Protocol |          Size           | Packet |    Data...      |
-|  (1B)    |         (4B)            |  (1B)  |                 |
-+----------+----------+----------+----------+----------+----------+
+ED2K Packet Header (6 bytes total):
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   Protocol    |                    Size (LE)                  |
+|     (1B)      |                   (4B)                        |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   Opcode      |                 Payload Data                  |
+|    (1B)       |                 (Size-1 bytes)                |
++-+-+-+-+-+-+-+-+                                               +
+|                          ... continued ...                    |
++                                                               +
 ```
 
-**Protocol Values:**
-- `0xE3`: Standard eDonkey protocol
-- `0xC5`: eMule extended protocol
-- `0xD4`: Compressed protocol
+**Field Descriptions:**
+- **Protocol (1 byte)**: Protocol identifier
+  - `0xE3`: Standard eDonkey protocol  
+  - `0xC5`: eMule extended protocol
+  - `0xD4`: Compressed protocol
+- **Size (4 bytes, little-endian)**: Total packet size including opcode (excludes protocol+size fields)
+- **Opcode (1 byte)**: Packet type identifier
+- **Payload Data (Size-1 bytes)**: Packet-specific data
 
 ### 3.3 Data Types
 
@@ -260,6 +272,23 @@ func HashFromString(s string) (Hash, error) {
 
 #### 3.3.2 Endpoint (6 bytes)
 Network endpoint (IPv4 address + port).
+
+```
+Endpoint Structure (6 bytes total):
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                        IPv4 Address (LE)                     |
+|                           (4B)                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|         Port (LE)             |
+|           (2B)                |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+**Field Descriptions:**
+- **IPv4 Address (4 bytes, little-endian)**: Network address
+- **Port (2 bytes, little-endian)**: TCP/UDP port number
 
 ```go
 type Endpoint struct {
@@ -486,10 +515,34 @@ func CreateHelloPacket(userHash Hash, nick string, port uint16) *HelloPacket {
 #### 4.3.1 Login Request Packet
 
 ```
-+----------+----------+----------+----------+----------+----------+
-| Hash (16 bytes)     | IP (4B)  | Port(2B) | Tags...           |
-+----------+----------+----------+----------+----------+----------+
+Login Request Packet (Opcode: 0x01):
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                        Client Hash                            |
+|                        (16 bytes)                             |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       Client IP (LE)                         |
+|                         (4B)                                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|       Client Port (LE)        |         Tag Count (LE)       |
+|           (2B)                |             (4B)              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                          Tag Data                             |
+|                      (Variable length)                       |
+|                                                               |
++                                                               +
 ```
+
+**Field Descriptions:**
+- **Client Hash (16 bytes)**: Persistent client identifier (user hash)
+- **Client IP (4 bytes, little-endian)**: Client's public IP address
+- **Client Port (2 bytes, little-endian)**: Client's listening port
+- **Tag Count (4 bytes, little-endian)**: Number of capability tags
+- **Tag Data (variable)**: Client capability and version tags
 
 **Design Rationale:** The login request includes the client's user hash (persistent identifier), current IP/port for callback connections, and capability tags. This allows the server to assign an appropriate client ID and understand client capabilities.
 
@@ -564,18 +617,73 @@ func (i *IdChange) Deserialize(buf []byte) error {
 #### 4.2.1 Search Request (0x16)
 
 ```
-+----------+----------+----------+----------+----------+
-| Search Type(1B) | Query String... | File Type | Size Constraints |
-+----------+----------+----------+----------+----------+
+Search Request Packet (Opcode: 0x16):
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                      Search Entries                           |
+|                   (Variable length)                          |
+|                                                               |
++                     ... continued ...                        +
+
+Search Entry Structure:
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+| Entry Type    |                                               |
+|     (1B)      |              Entry Data                       |
++-+-+-+-+-+-+-+-+          (Variable length)                   +
+|                                                               |
++                     ... continued ...                        +
+
+String Entry (Type 0x01):
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   String Len  |                                               |
+|     (2B LE)   |           String Data                         |
++-+-+-+-+-+-+-+-+          (String Len bytes)                  +
+|                     ... continued ...                        |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+Numeric Entry (Type 0x03):
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   Operator    |                                               |
+|     (1B)      |           Value (8B LE)                       |
++-+-+-+-+-+-+-+-+                                               +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+| Tag Name Len  |                                               |
+|     (2B LE)   |           Tag Name/ID                         |
++-+-+-+-+-+-+-+-+          (Variable length)                   +
+|                     ... continued ...                        |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+Boolean Entry (Type 0x00):
++-+-+-+-+-+-+-+-+
+|   Operator    |
+|     (1B)      |
++-+-+-+-+-+-+-+-+
 ```
 
-**Search Types:**
-- `0x00`: Generic search
-- `0x01`: Audio files
-- `0x02`: Video files
-- `0x03`: Images
-- `0x04`: Documents
-- `0x05`: Programs
+**Entry Types:**
+- `0x00`: Boolean operator (AND, OR, NOT)
+- `0x01`: String search term
+- `0x02`: String with tag
+- `0x03`: Numeric comparison (size, sources, etc.)
+- `0x08`: 64-bit numeric value
+
+**Operators (for Numeric Entries):**
+- `0x00`: Equal
+- `0x01`: Greater than
+- `0x02`: Less than  
+- `0x03`: Greater than or equal
+- `0x04`: Less than or equal
+- `0x05`: Not equal
+
+**Boolean Operators:**
+- `0x00`: AND
+- `0x01`: OR
+- `0x02`: NOT
 
 ```go
 type SearchRequest struct {
@@ -630,10 +738,59 @@ func (s *SearchRequest) Serialize() []byte {
 #### 4.2.2 Search Result (0x17)
 
 ```
-+----------+----------+----------+----------+----------+
-| Count(4B)| File Hash (16B)  | IP(4B) | Port(2B) | Tags... |
-+----------+----------+----------+----------+----------+
+Search Result Packet (Opcode: 0x17):
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                    Result Count (LE)                         |
+|                         (4B)                                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                       File Hash                               |
+|                      (16 bytes)                              |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                        Client IP (LE)                        |
+|                         (4B)                                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|      Client Port (LE)         |         Tag Count (LE)       |
+|           (2B)                |             (4B)              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                         Tag Data                              |
+|                    (Variable length)                         |
+|                                                               |
++                     ... repeated for each result ...        +
+
+Tag Structure:
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   Tag Type    |    Name Len   |                               |
+|     (1B)      |     (2B LE)   |          Tag Name             |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+      (Name Len bytes)        +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                        Tag Value                              |
+|                   (Type-dependent)                           |
+|                                                               |
++                     ... continued ...                        +
 ```
+
+**Field Descriptions:**
+- **Result Count (4 bytes, little-endian)**: Number of search results in packet
+- **File Hash (16 bytes)**: MD4 hash of the file
+- **Client IP (4 bytes, little-endian)**: IP address of client sharing the file
+- **Client Port (2 bytes, little-endian)**: Port number of client sharing the file
+- **Tag Count (4 bytes, little-endian)**: Number of metadata tags
+- **Tag Data (variable)**: File metadata (name, size, type, etc.)
+
+**Common Tag Types:**
+- File Name (Tag ID 0x01): String containing filename
+- File Size (Tag ID 0x02): 32/64-bit file size in bytes
+- File Type (Tag ID 0x03): String indicating file category
+- Sources Available (Tag ID 0x15): Number of sources sharing this file
 
 **Design Rationale:** Search results include file metadata (name, size, type) and peer information (IP/port). The tag system allows flexible metadata without breaking protocol compatibility.
 
@@ -766,10 +923,44 @@ Client-to-client connections use TCP on dynamically assigned ports.
 #### 5.1.2 Hello Packet
 
 ```
-+----------+----------+----------+----------+----------+
-| Hash (16 bytes)     | ID (4B)  | Port(2B) | Tags...  |
-+----------+----------+----------+----------+----------+
+Hello Packet (Opcode: 0x01):
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   Hash Len    |                                               |
+|     (1B)      |              Client Hash                      |
++-+-+-+-+-+-+-+-+             (16 bytes)                        +
+|                                                               |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                         Client ID (LE)                       |
+|                           (4B)                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|      Client Port (LE)         |         Tag Count (LE)       |
+|           (2B)                |             (4B)              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                         Tag Data                              |
+|                    (Variable length)                         |
+|                                                               |
++                     ... continued ...                        +
+|                                                               |
+|                     Server Endpoint                          |
+|                       (6 bytes)                              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
+
+**Field Descriptions:**
+- **Hash Length (1 byte)**: Always 16 (0x10) for MD4 hash
+- **Client Hash (16 bytes)**: Persistent client identifier  
+- **Client ID (4 bytes, little-endian)**: Current session client ID
+- **Client Port (2 bytes, little-endian)**: Client's listening port
+- **Tag Count (4 bytes, little-endian)**: Number of property tags
+- **Tag Data (variable)**: Client properties and capabilities
+- **Server Endpoint (6 bytes)**: Connected server's IP and port
+
+**Hello Answer Packet (Opcode: 0x4C):**
+Same structure as Hello but without the Hash Length field (starts directly with Client Hash).
 
 **Design Rationale:** The Hello packet establishes peer identity and capabilities. The hash identifies the client persistently, while tags communicate supported features and client software version.
 
@@ -836,9 +1027,65 @@ func (h *Hello) Deserialize(buf []byte) error {
 Request to download a file.
 
 ```
-+----------+----------+----------+----------+
-| Hash (16 bytes)     | Part Mask...       |
-+----------+----------+----------+----------+
+File Request Packet (Opcode: 0x58):
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                       File Hash                               |
+|                      (16 bytes)                              |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+#### 5.2.2 Request Parts (0x47)
+
+Request specific blocks of a file.
+
+```
+Request Parts Packet (Opcode: 0x47):
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                       File Hash                               |
+|                      (16 bytes)                              |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                    Begin Offset (LE)                         |
+|                         (4B)                                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     End Offset (LE)                          |
+|                         (4B)                                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|     ... additional offset pairs (up to 3 total pairs) ...   |
++                                                               +
+```
+
+#### 5.2.3 Request Parts 64 (0x4B)
+
+64-bit version for large files (>4GB).
+
+```
+Request Parts 64 Packet (Opcode: 0x4B):
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                       File Hash                               |
+|                      (16 bytes)                              |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                    Begin Offset (LE)                         |
+|                         (8B)                                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                     End Offset (LE)                          |
+|                         (8B)                                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|     ... additional offset pairs (up to 3 total pairs) ...   |
++                                                               +
 ```
 
 **Design Rationale:** File requests include a bit mask indicating which 9.28MB chunks are needed. This enables efficient resume of partial downloads.
@@ -909,14 +1156,60 @@ func (r *RequestParts64) Deserialize(buf []byte) error {
 }
 ```
 
-#### 5.2.3 Sending Part (0x46)
+#### 5.2.4 Sending Part (0x46)
 
-Send requested data block.
+Send requested data block (32-bit offsets).
 
 ```
-+----------+----------+----------+----------+----------+
-| Hash (16 bytes)     | Start Offset(8B) | End Offset(8B) | Data... |
-+----------+----------+----------+----------+----------+
+Sending Part Packet (Opcode: 0x46):
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                       File Hash                               |
+|                      (16 bytes)                              |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                    Begin Offset (LE)                         |
+|                         (4B)                                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                     End Offset (LE)                          |
+|                         (4B)                                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                        File Data                              |
+|                 (End - Begin bytes)                          |
+|                                                               |
++                     ... continued ...                        +
+```
+
+#### 5.2.5 Sending Part 64 (0x4A)
+
+Send requested data block (64-bit offsets for large files).
+
+```
+Sending Part 64 Packet (Opcode: 0x4A):
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                       File Hash                               |
+|                      (16 bytes)                              |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                    Begin Offset (LE)                         |
+|                         (8B)                                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                     End Offset (LE)                          |
+|                         (8B)                                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                        File Data                              |
+|                 (End - Begin bytes)                          |
+|                                                               |
++                     ... continued ...                        +
 ```
 
 ```go
@@ -1035,36 +1328,90 @@ func (k KadID) String() string {
 Kademlia packets use a different header format:
 
 ```
-+----------+----------+----------+----------+
-| Opcode(1B)| Peer ID (16B)     | Data...  |
-+----------+----------+----------+----------+
+Kademlia UDP Packet Structure:
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   Opcode      |                                               |
+|     (1B)      |                                               |
++-+-+-+-+-+-+-+-+              Sender KadID                     +
+|                            (16 bytes)                         |
+|                                                               |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                        Payload Data                           |
+|                   (Variable length)                          |
+|                                                               |
++                     ... continued ...                        +
 ```
+
+**Field Descriptions:**
+- **Opcode (1 byte)**: Kademlia command type
+- **Sender KadID (16 bytes)**: 128-bit Kademlia node identifier
+- **Payload Data (variable)**: Command-specific data
 
 ### 6.3 Bootstrap Protocol
 
 #### 6.3.1 Bootstrap Request (0x01)
 
-```go
-type Kad2BootstrapReq struct{}
-
-const KadOpBootstrapReq = 0x01
-
-func (k *Kad2BootstrapReq) Serialize() []byte {
-    return []byte{} // No payload
-}
+```
+Bootstrap Request (Kad Opcode: 0x01):
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   0x01        |                                               |
++-+-+-+-+-+-+-+-+              Sender KadID                     +
+|                            (16 bytes)                         |
+|                                                               |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
 #### 6.3.2 Bootstrap Response (0x09)
 
 ```
-+----------+----------+----------+----------+
-| Count(2B)| Contact 1 (25B) | Contact 2... |
-+----------+----------+----------+----------+
-```
+Bootstrap Response (Kad Opcode: 0x09):
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   0x09        |                                               |
++-+-+-+-+-+-+-+-+              Sender KadID                     +
+|                            (16 bytes)                         |
+|                                                               |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|    Contact Count (LE)         |                               |
+|         (2B)                  |                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+                               +
+|                                                               |
+|                     First Contact                             |
+|                      (25 bytes)                              |
+|                                                               |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                    ... additional contacts ...               |
++                                                               +
 
-Each contact contains:
-- KadID (16 bytes)
-- IP address (4 bytes)
+Contact Structure (25 bytes):
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                        KadID                                  |
+|                      (16 bytes)                              |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       IP Address (LE)                        |
+|                         (4B)                                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|        UDP Port (LE)          |    TCP Port (LE)             |
+|           (2B)                |       (2B)                   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+| Version |
+|   (1B)  |
++-+-+-+-+-+
+```
 - TCP port (2 bytes)
 - UDP port (2 bytes)
 - Version (1 byte)
@@ -1136,9 +1483,50 @@ const KadOpHelloReq = 0x11
 Find peers sharing a specific file.
 
 ```
-+----------+----------+----------+----------+
-| Target Hash (16B)   | Start ID (16B)     |
-+----------+----------+----------+----------+
+Search Sources Request (Kad Opcode: 0x52):
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   0x52        |                                               |
++-+-+-+-+-+-+-+-+              Sender KadID                     +
+|                            (16 bytes)                         |
+|                                                               |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                      Target Hash                              |
+|                      (16 bytes)                              |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|        Start Position (LE)    |                               |
+|            (2B)               |                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+                               +
+|                       File Size (LE)                         |
+|                         (8B)                                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+**Hello Request/Response (0x11/0x18):**
+
+```
+Hello Request (Kad Opcode: 0x11):
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   0x11        |                                               |
++-+-+-+-+-+-+-+-+              Sender KadID                     +
+|                            (16 bytes)                         |
+|                                                               |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                     Receiver KadID                           |
+|                      (16 bytes)                              |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|       TCP Port (LE)           |  Version  |
+|           (2B)                |    (1B)   |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
 
 ```go
@@ -1253,19 +1641,72 @@ The server.met file contains a list of known ED2K servers with their metadata.
 ### 8.1 File Format
 
 ```
-+----------+----------+----------+----------+
-| Version  | Count(4B)| Server 1 | Server 2...
-|  (1B)    |          | Entry    | Entry    |
-+----------+----------+----------+----------+
+Server.met File Structure:
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   Version     |                                               |
+|     (1B)      |           Server Count (LE)                  |
++-+-+-+-+-+-+-+-+                (4B)                          +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                     First Server Entry                       |
+|                   (Variable length)                          |
+|                                                               |
++                     ... continued ...                        +
+|                                                               |
+|                   Additional Server Entries                  |
+|                   (Variable length each)                     |
+|                                                               |
++                     ... continued ...                        +
 ```
+
+**Field Descriptions:**
+- **Version (1 byte)**: File format version (usually 0xE0 or 224)
+- **Server Count (4 bytes, little-endian)**: Number of server entries
 
 ### 8.2 Server Entry Format
 
 ```
-+----------+----------+----------+----------+----------+
-| IP (4B)  | Port(2B) | Tag Count| Tags...           |
-+----------+----------+----------+----------+----------+
+Server Entry Structure:
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       Server IP (LE)                         |
+|                         (4B)                                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|      Server Port (LE)         |        Tag Count (LE)        |
+|           (2B)                |             (4B)              |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                         Tag Data                              |
+|                   (Variable length)                          |
+|                                                               |
++                     ... continued ...                        +
+
+Tag Structure:
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|   Tag Type    |   Name Len    |                               |
+|     (1B)      |     (2B LE)   |                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+                               +
+|                       Tag Name                                |
+|               (Name Len bytes or 1B tag ID)                  |
++                                                               +
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                        Tag Value                              |
+|                  (Type-dependent)                            |
+|                                                               |
++                     ... continued ...                        +
 ```
+
+**Special Name Length Handling:**
+- If Name Len = 1: Next byte is tag ID (0x01, 0x0B, etc.)
+- If Name Len > 1: Next Name Len bytes contain tag name string
 
 **Design Rationale:** The tag-based format allows flexible server metadata without breaking compatibility. New server properties can be added as new tag types.
 
@@ -1462,20 +1903,61 @@ The nodes.dat file contains Kademlia bootstrap nodes for DHT initialization.
 ### 9.1 File Format
 
 ```
-+----------+----------+----------+----------+
-| Version  | Count(4B)| Node 1   | Node 2...
-|  (4B)    |          | Entry    | Entry    |
-+----------+----------+----------+----------+
+Nodes.dat File Structure:
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       Version (LE)                           |
+|                         (4B)                                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                      Node Count (LE)                         |
+|                         (4B)                                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                      First Node Entry                        |
+|                       (25 bytes)                             |
+|                                                               |
++                     ... continued ...                        +
+|                                                               |
+|                   Additional Node Entries                    |
+|                    (25 bytes each)                           |
+|                                                               |
++                     ... continued ...                        +
 ```
+
+**Field Descriptions:**
+- **Version (4 bytes, little-endian)**: File format version
+- **Node Count (4 bytes, little-endian)**: Number of bootstrap nodes
 
 ### 9.2 Node Entry Format
 
 ```
-+----------+----------+----------+----------+----------+----------+
-| KadID (16 bytes)     | IP (4B)  | UDP Port | TCP Port | Ver(1B)|
-|                      |          |  (2B)    |  (2B)    |        |
-+----------+----------+----------+----------+----------+----------+
+Node Entry Structure (25 bytes):
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                                                               |
+|                        KadID                                  |
+|                      (16 bytes)                              |
+|                                                               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                       IP Address (LE)                        |
+|                         (4B)                                 |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|        UDP Port (LE)          |       TCP Port (LE)          |
+|           (2B)                |           (2B)               |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+| Version |
+|   (1B)  |
++-+-+-+-+-+
 ```
+
+**Field Descriptions:**
+- **KadID (16 bytes)**: 128-bit Kademlia node identifier
+- **IP Address (4 bytes, little-endian)**: Node's IP address
+- **UDP Port (2 bytes, little-endian)**: Kademlia UDP port (usually 4665)
+- **TCP Port (2 bytes, little-endian)**: ed2k TCP port (usually 4662)
+- **Version (1 byte)**: Node software version
 
 **Design Rationale:** Nodes.dat provides a bootstrap mechanism for new clients to join the Kademlia network. The file format is compact and includes sufficient information to establish initial DHT connections.
 
